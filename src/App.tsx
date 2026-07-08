@@ -178,7 +178,7 @@ function GameShell({
             "",
             "Your output:",
             actual || "(empty)",
-            result.stderr ? `\nPython error:\n${result.stderr}` : "",
+            result.stderr ? `\nYour code raised an error:\n${result.stderr}` : "",
           ].join("\n"),
         );
         notify({

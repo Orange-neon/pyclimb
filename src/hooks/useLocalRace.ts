@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DIFFICULTY_CONFIG } from "../data/difficulty";
 import type { Difficulty, Problem, ProblemBank } from "../data/problemTypes";
+import { createBotAction } from "../lib/botSimulation";
 import { getRemainingCounts, pickUnsolvedProblem } from "../lib/raceLogic";
 import type { RaceEvent, Racer } from "../types/race";
 
@@ -8,6 +9,7 @@ const STORAGE_KEY = "col.local-race.v0";
 const LEGACY_STORAGE_KEY = "pyclimb.local-race.v0";
 
 interface PersistedRace {
+  botSimulationVersion: number;
   score: number;
   solvedIds: string[];
   activeProblemId: string | null;
@@ -25,6 +27,7 @@ const INITIAL_BOTS = {
 };
 
 const initialState: PersistedRace = {
+  botSimulationVersion: 1,
   score: 0,
   solvedIds: [],
   activeProblemId: null,
@@ -48,7 +51,10 @@ function readRace(): PersistedRace {
       ...initialState,
       ...parsed,
       solvedIds: Array.isArray(parsed.solvedIds) ? parsed.solvedIds : [],
-      botScores: { ...INITIAL_BOTS, ...parsed.botScores },
+      botScores:
+        parsed.botSimulationVersion === initialState.botSimulationVersion
+          ? { ...INITIAL_BOTS, ...parsed.botScores }
+          : { ...INITIAL_BOTS },
       events: Array.isArray(parsed.events) ? parsed.events.slice(0, 12) : [],
     };
   } catch {
@@ -73,24 +79,40 @@ export function useLocalRace(bank: ProblemBank) {
   }, [state]);
 
   useEffect(() => {
-    let timeoutId = 0;
-    const schedule = () => {
-      timeoutId = window.setTimeout(() => {
-        const names = Object.keys(INITIAL_BOTS);
-        const name = names[Math.floor(Math.random() * names.length)];
-        const rolls: Difficulty[] = ["easy", "easy", "medium", "medium", "hard"];
-        const difficulty = rolls[Math.floor(Math.random() * rolls.length)];
-        const points = DIFFICULTY_CONFIG[difficulty].points;
+    let cancelled = false;
+    const timeoutIds = new Set<number>();
+
+    const schedule = (name: keyof typeof INITIAL_BOTS) => {
+      const action = createBotAction();
+      const timeoutId = window.setTimeout(() => {
+        timeoutIds.delete(timeoutId);
+        if (cancelled) return;
+
+        const amount = Math.abs(action.delta);
+        const message = action.forfeited
+          ? `${name} forfeited a ${action.difficulty} climb (-${amount})`
+          : `${name} cleared a ${action.difficulty} climb (+${amount})`;
         setState((current) => ({
           ...current,
-          botScores: { ...current.botScores, [name]: current.botScores[name] + points },
-          events: [event(`${name} cleared a ${difficulty} climb (+${points})`, "neutral"), ...current.events].slice(0, 12),
+          botScores: {
+            ...current.botScores,
+            [name]: current.botScores[name] + action.delta,
+          },
+          events: [event(message, action.forfeited ? "bad" : "neutral"), ...current.events].slice(0, 12),
         }));
-        schedule();
-      }, 7_000 + Math.random() * 7_000);
+        schedule(name);
+      }, action.delayMs);
+      timeoutIds.add(timeoutId);
     };
-    schedule();
-    return () => window.clearTimeout(timeoutId);
+
+    for (const name of Object.keys(INITIAL_BOTS) as Array<keyof typeof INITIAL_BOTS>) {
+      schedule(name);
+    }
+
+    return () => {
+      cancelled = true;
+      for (const timeoutId of timeoutIds) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   const activeProblem = useMemo(

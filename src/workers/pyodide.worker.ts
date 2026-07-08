@@ -1,3 +1,5 @@
+import { formatPythonError } from "../lib/pythonError";
+
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/";
 const PYODIDE_MODULE = `${PYODIDE_BASE}pyodide.mjs`;
 
@@ -48,7 +50,12 @@ async function runCode(code: string, input: string) {
     return { stdout, stderr };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { stdout, stderr: stderr || message, error: message };
+    const formattedError = formatPythonError(message);
+    return {
+      stdout,
+      stderr: [stderr.trimEnd(), formattedError].filter(Boolean).join("\n"),
+      error: formattedError,
+    };
   } finally {
     globals.destroy?.();
   }
