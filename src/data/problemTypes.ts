@@ -1,4 +1,5 @@
 export type Difficulty = "easy" | "medium" | "hard";
+export type TimedProblemMode = "bomb" | "double";
 
 export interface TestCase {
   input: string;
@@ -17,6 +18,7 @@ export interface Problem {
   progressionOrder?: number;
   complexityScore?: number;
   bonusPoints?: number;
+  timedMode?: TimedProblemMode;
 }
 
 export interface ProblemBank {

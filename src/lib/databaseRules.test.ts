@@ -55,4 +55,16 @@ describe("Realtime Database rule shape", () => {
     expect(validation).toContain("forfeited");
     expect(validation).toContain("streak");
   });
+
+  it("protects streak-gated leader challenges and challenge awards", () => {
+    const room = ((rules.rooms as RuleNode).$code ?? {}) as RuleNode;
+    const challenge = room.challenge as RuleNode;
+    expect(String(challenge[".write"])).toContain("currentStreak");
+    expect(String(challenge[".write"])).toContain("championUid");
+    expect(String(challenge[".write"])).toContain("winnerUid");
+    expect(String(challenge[".validate"])).toContain("problemReward");
+    const progress = ((room.progress as RuleNode).$uid ?? {}) as RuleNode;
+    const awards = ((progress.challengeAwards as RuleNode).$challengeId ?? {}) as RuleNode;
+    expect(String(awards[".validate"])).toContain("-2000");
+  });
 });

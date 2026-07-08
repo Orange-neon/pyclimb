@@ -14,6 +14,7 @@ import { DIFFICULTY_CONFIG } from "../data/difficulty";
 import { loadProblemBank } from "../data/problemBank";
 import { getProblemReward } from "../data/problemProgression";
 import type { Problem, ProblemBank } from "../data/problemTypes";
+import { BOMB_PENALTY, DOUBLE_MULTIPLIER } from "../data/timedProblems";
 import {
   getFirebaseContext,
   isFirebaseConfigured,
@@ -23,8 +24,10 @@ import {
   type GoogleUserProfile,
 } from "../lib/firebase";
 import { sortRoomPlayers } from "../lib/raceLogic";
+import { CHALLENGER_WIN_PRIZE, getChallengeScoreDelta } from "../lib/challengeLogic";
 import type {
   PlayerProgress,
+  RoomChallenge,
   RoomMeta,
   RoomPlayer,
   RoomSession,
@@ -37,15 +40,19 @@ const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const EMPTY_PROGRESS: PlayerProgress = {
   score: 0,
   solvedCount: 0,
+  currentStreak: 0,
   solved: {},
   adaptive: createAdaptiveProfiles(),
+  challengeAwards: {},
 };
 
 function normalizeProgress(value: PlayerProgress | null): PlayerProgress {
   const progress = value ?? EMPTY_PROGRESS;
   return {
     ...progress,
+    currentStreak: Math.max(0, Number(progress.currentStreak) || 0),
     solved: progress.solved ?? {},
+    challengeAwards: progress.challengeAwards ?? {},
     adaptive: {
       easy: normalizeAdaptiveProfile(progress.adaptive?.easy),
       medium: normalizeAdaptiveProfile(progress.adaptive?.medium),
@@ -87,6 +94,7 @@ export function useRaceRoom(bank: ProblemBank) {
   const [progress, setProgress] = useState<PlayerProgress>(EMPTY_PROGRESS);
   const [progressLoaded, setProgressLoaded] = useState(false);
   const [events, setEvents] = useState<RaceEvent[]>([]);
+  const [challenge, setChallenge] = useState<RoomChallenge | null>(null);
   const [connected, setConnected] = useState(true);
   const [loading, setLoading] = useState(Boolean(session));
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +182,7 @@ export function useRaceRoom(bank: ProblemBank) {
         const metaRef = ref(database, `rooms/${session.code}/meta`);
         const leaderboardRef = ref(database, `rooms/${session.code}/leaderboard`);
         const progressRef = ref(database, `rooms/${session.code}/progress/${session.uid}`);
+        const challengeRef = ref(database, `rooms/${session.code}/challenge`);
         const eventsRef = query(
           ref(database, `rooms/${session.code}/events`),
           orderByChild("createdAt"),
@@ -201,6 +210,9 @@ export function useRaceRoom(bank: ProblemBank) {
               setProgress(normalizeProgress(snapshot.val() as PlayerProgress | null));
               setProgressLoaded(true);
             }
+          }),
+          onValue(challengeRef, (snapshot) => {
+            setChallenge(snapshot.exists() ? (snapshot.val() as RoomChallenge) : null);
           }),
           onValue(eventsRef, (snapshot) => {
             const value = (snapshot.val() ?? {}) as Record<string, Omit<RaceEvent, "id">>;
@@ -476,14 +488,14 @@ export function useRaceRoom(bank: ProblemBank) {
   );
 
   const recordSolve = useCallback(
-    async (problem: Problem) => {
+    async (problem: Problem, multiplier = 1): Promise<number> => {
       if (!session || session.role !== "player" || meta?.status !== "active") {
         throw new Error("The race is not active.");
       }
       const { database, db } = await getFirebaseContext();
       const { ref, runTransaction, update } = db;
       const progressRef = ref(database, `rooms/${session.code}/progress/${session.uid}`);
-      const points = getProblemReward(problem);
+      const points = getProblemReward(problem) * (multiplier === DOUBLE_MULTIPLIER ? DOUBLE_MULTIPLIER : 1);
       const now = Date.now() + serverOffsetRef.current;
       const result = await runTransaction(progressRef, (current: PlayerProgress | null) => {
         const value = normalizeProgress(current);
@@ -492,6 +504,7 @@ export function useRaceRoom(bank: ProblemBank) {
           ...value,
           score: value.score + points,
           solvedCount: value.solvedCount + 1,
+          currentStreak: (value.currentStreak ?? 0) + 1,
           solved: { ...(value.solved ?? {}), [problem.id]: now },
           adaptive: {
             ...value.adaptive,
@@ -502,7 +515,7 @@ export function useRaceRoom(bank: ProblemBank) {
           },
         };
       });
-      if (!result.committed) return;
+      if (!result.committed) return 0;
       const next = result.snapshot.val() as PlayerProgress;
       await update(ref(database, `rooms/${session.code}/leaderboard/${session.uid}`), {
         score: next.score,
@@ -510,7 +523,19 @@ export function useRaceRoom(bank: ProblemBank) {
         lastAcceptedAt: now,
       });
       await addEvent(`${session.nickname} solved ${problem.title} (+${points})`, "good");
+      const challengeRef = ref(database, `rooms/${session.code}/challenge`);
+      await runTransaction(challengeRef, (current: RoomChallenge | null) => {
+        if (
+          !current ||
+          current.status !== "waiting" ||
+          current.championUid !== session.uid
+        ) {
+          return undefined;
+        }
+        return { ...current, status: "active", startedAt: now };
+      });
       if (!meta.unlimited && next.solvedCount >= meta.problemCount) await finishRace("completed");
+      return points;
     },
     [addEvent, finishRace, meta, session],
   );
@@ -529,6 +554,7 @@ export function useRaceRoom(bank: ProblemBank) {
         return {
           ...value,
           score: value.score - penalty,
+          currentStreak: 0,
           adaptive: {
             ...value.adaptive,
             [problem.difficulty]: updateAdaptiveProfile(
@@ -556,6 +582,7 @@ export function useRaceRoom(bank: ProblemBank) {
         const value = normalizeProgress(current);
         return {
           ...value,
+          currentStreak: 0,
           adaptive: {
             ...value.adaptive,
             [problem.difficulty]: updateAdaptiveProfile(
@@ -569,6 +596,170 @@ export function useRaceRoom(bank: ProblemBank) {
     [meta?.status, session],
   );
 
+  const recordBombExpiry = useCallback(
+    async (problem: Problem) => {
+      if (!session || session.role !== "player" || meta?.status !== "active") return;
+      const { database, db } = await getFirebaseContext();
+      const progressRef = db.ref(database, `rooms/${session.code}/progress/${session.uid}`);
+      const result = await db.runTransaction(progressRef, (current: PlayerProgress | null) => {
+        const value = normalizeProgress(current);
+        return {
+          ...value,
+          score: value.score - BOMB_PENALTY,
+          currentStreak: 0,
+          adaptive: {
+            ...value.adaptive,
+            [problem.difficulty]: updateAdaptiveProfile(
+              value.adaptive?.[problem.difficulty],
+              "forfeited",
+            ),
+          },
+        };
+      });
+      const next = result.snapshot.val() as PlayerProgress;
+      await db.update(db.ref(database, `rooms/${session.code}/leaderboard/${session.uid}`), {
+        score: next.score,
+      });
+      await addEvent(`${session.nickname}'s ${problem.title} bomb exploded (-${BOMB_PENALTY})`, "bad");
+    },
+    [addEvent, meta?.status, session],
+  );
+
+  const requestChallenge = useCallback(
+    async (difficulty: Problem["difficulty"]) => {
+      if (!session || session.role !== "player" || !meta || meta.status !== "active") {
+        throw new Error("Challenges are only available during an active room.");
+      }
+      if ((progress.currentStreak ?? 0) < 5) {
+        throw new Error("Solve five problems in a row before issuing a challenge.");
+      }
+      const standings = sortRoomPlayers(players);
+      const champion = standings[0];
+      const challenger = standings.find((player) => player.uid === session.uid);
+      if (!champion || !challenger || champion.uid === session.uid) {
+        throw new Error("The first-place player cannot challenge themselves.");
+      }
+
+      const sourceBank = meta.bankVersion === bank.version ? bank : await loadProblemBank(meta.bankVersion);
+      const selectedTopics = parseTopicSelection(meta.topicIds);
+      const roomBank = selectedTopics
+        ? filterProblemBankByTopics(sourceBank, selectedTopics)
+        : sourceBank;
+      const { database, db } = await getFirebaseContext();
+      const championProgressSnapshot = await db.get(
+        db.ref(database, `rooms/${session.code}/progress/${champion.uid}`),
+      );
+      const championProgress = normalizeProgress(
+        championProgressSnapshot.val() as PlayerProgress | null,
+      );
+      const unavailable = new Set([
+        ...Object.keys(progress.solved ?? {}),
+        ...Object.keys(championProgress.solved ?? {}),
+      ]);
+      const candidates = roomBank.problems.filter(
+        (problem) => problem.difficulty === difficulty && !unavailable.has(problem.id),
+      );
+      if (!candidates.length) throw new Error(`No shared unsolved ${difficulty} problem remains.`);
+      const problem = candidates[Math.floor(Math.random() * candidates.length)];
+      const now = Date.now() + serverOffsetRef.current;
+      const nextChallenge: RoomChallenge = {
+        id: crypto.randomUUID(),
+        status: "waiting",
+        challengerUid: challenger.uid,
+        challengerName: challenger.nickname,
+        championUid: champion.uid,
+        championName: champion.nickname,
+        difficulty,
+        problemId: problem.id,
+        problemReward: getProblemReward(problem),
+        createdAt: now,
+        startedAt: null,
+        finishedAt: null,
+        winnerUid: null,
+      };
+      const result = await db.runTransaction(
+        db.ref(database, `rooms/${session.code}/challenge`),
+        (current: RoomChallenge | null) =>
+          current === null || current.status === "finished" ? nextChallenge : undefined,
+      );
+      if (!result.committed) throw new Error("Another challenge is already pending.");
+      await addEvent(
+        `${challenger.nickname} challenged leader ${champion.nickname} to a ${difficulty} race`,
+        "neutral",
+      );
+    },
+    [addEvent, bank, meta, players, progress.currentStreak, progress.solved, session],
+  );
+
+  const recordChallengeSolve = useCallback(
+    async (problem: Problem): Promise<number> => {
+      if (!session || !challenge || challenge.status !== "active") {
+        throw new Error("This challenge is no longer active.");
+      }
+      const { database, db } = await getFirebaseContext();
+      const now = Date.now() + serverOffsetRef.current;
+      const result = await db.runTransaction(
+        db.ref(database, `rooms/${session.code}/challenge`),
+        (current: RoomChallenge | null) => {
+          if (
+            !current ||
+            current.status !== "active" ||
+            current.problemId !== problem.id ||
+            (current.challengerUid !== session.uid && current.championUid !== session.uid)
+          ) {
+            return undefined;
+          }
+          return { ...current, status: "finished", winnerUid: session.uid, finishedAt: now };
+        },
+      );
+      if (!result.committed) throw new Error("The other racer finished first.");
+      const prize =
+        session.uid === challenge.challengerUid ? CHALLENGER_WIN_PRIZE : challenge.problemReward;
+      await addEvent(`${session.nickname} won the head-to-head challenge (+${prize})`, "good");
+      return prize;
+    },
+    [addEvent, challenge, session],
+  );
+
+  useEffect(() => {
+    if (
+      !session ||
+      session.role !== "player" ||
+      !challenge ||
+      challenge.status !== "finished" ||
+      !challenge.winnerUid ||
+      (challenge.challengerUid !== session.uid && challenge.championUid !== session.uid) ||
+      progress.challengeAwards?.[challenge.id] !== undefined
+    ) {
+      return;
+    }
+    const delta = getChallengeScoreDelta(challenge, session.uid, challenge.problemReward);
+    let cancelled = false;
+    getFirebaseContext()
+      .then(async ({ database, db }) => {
+        const progressRef = db.ref(database, `rooms/${session.code}/progress/${session.uid}`);
+        const result = await db.runTransaction(progressRef, (current: PlayerProgress | null) => {
+          const value = normalizeProgress(current);
+          if (value.challengeAwards?.[challenge.id] !== undefined) return undefined;
+          return {
+            ...value,
+            score: value.score + delta,
+            challengeAwards: { ...(value.challengeAwards ?? {}), [challenge.id]: delta },
+          };
+        });
+        if (!result.committed || cancelled) return;
+        const next = result.snapshot.val() as PlayerProgress;
+        await db.update(
+          db.ref(database, `rooms/${session.code}/leaderboard/${session.uid}`),
+          { score: next.score },
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [challenge, progress.challengeAwards, session]);
+
   const rematch = useCallback(async () => {
     if (!session || session.role !== "host" || !meta) return;
     const { database, db } = await getFirebaseContext();
@@ -579,6 +770,7 @@ export function useRaceRoom(bank: ProblemBank) {
       "meta/endsAt": null,
       "meta/endedAt": null,
       "meta/endReason": null,
+      challenge: null,
       events: null,
     };
     for (const player of players) {
@@ -599,6 +791,7 @@ export function useRaceRoom(bank: ProblemBank) {
     setProgress(EMPTY_PROGRESS);
     setProgressLoaded(false);
     setEvents([]);
+    setChallenge(null);
     if (!current || !isFirebaseConfigured) return;
     const { database, db } = await getFirebaseContext();
     const { ref, remove, set } = db;
@@ -633,6 +826,7 @@ export function useRaceRoom(bank: ProblemBank) {
     meta,
     players: sortedPlayers,
     progress,
+    challenge,
     events,
     loading,
     error,
@@ -649,6 +843,9 @@ export function useRaceRoom(bank: ProblemBank) {
     recordSolve,
     recordForfeit,
     recordMiss,
+    recordBombExpiry,
+    requestChallenge,
+    recordChallengeSolve,
     rematch,
   };
 }

@@ -1,5 +1,6 @@
 import type { RaceEvent } from "./race";
 import type { AdaptiveProfiles } from "../data/adaptiveLearning";
+import type { Difficulty } from "../data/problemTypes";
 
 export type RoomStatus = "lobby" | "active" | "finished";
 export type RoomEndReason = "time" | "host" | "completed" | null;
@@ -35,8 +36,28 @@ export interface RoomPlayer {
 export interface PlayerProgress {
   score: number;
   solvedCount: number;
+  currentStreak?: number;
   solved: Record<string, number>;
   adaptive?: AdaptiveProfiles;
+  challengeAwards?: Record<string, number>;
+}
+
+export type RoomChallengeStatus = "waiting" | "active" | "finished";
+
+export interface RoomChallenge {
+  id: string;
+  status: RoomChallengeStatus;
+  challengerUid: string;
+  challengerName: string;
+  championUid: string;
+  championName: string;
+  difficulty: Difficulty;
+  problemId: string;
+  problemReward: number;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  winnerUid: string | null;
 }
 
 export interface RoomSession {

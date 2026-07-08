@@ -2,16 +2,19 @@ import confetti from "canvas-confetti";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bomb,
   Clock3,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
   Sparkles,
   Trophy,
+  Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "./components/BrandLogo";
 import { Console } from "./components/Console";
+import { ChallengePanel } from "./components/ChallengePanel";
 import { useFeedback } from "./components/Feedback";
 import { HomeScreen } from "./components/HomeScreen";
 import { HostDashboard } from "./components/HostDashboard";
@@ -30,6 +33,7 @@ import { DIFFICULTY_CONFIG } from "./data/difficulty";
 import { loadProblemBank } from "./data/problemBank";
 import { getProblemBonus, getProblemReward } from "./data/problemProgression";
 import type { Difficulty, Problem, ProblemBank } from "./data/problemTypes";
+import { BOMB_PENALTY, TIMED_PROBLEM_SECONDS } from "./data/timedProblems";
 import { useLocalRace } from "./hooks/useLocalRace";
 import { useMultiplayerRace } from "./hooks/useMultiplayerRace";
 import { usePyodide } from "./hooks/usePyodide";
@@ -141,7 +145,51 @@ function GameShell({
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
   const [solutionProblem, setSolutionProblem] = useState<Problem | null>(null);
+  const [timedSeconds, setTimedSeconds] = useState<number | null>(null);
+  const handledExpiry = useRef<string | null>(null);
   const { confirm, notify } = useFeedback();
+
+  useEffect(() => {
+    const problem = race.activeProblem;
+    if (!problem?.timedMode || !race.timedDeadline) {
+      setTimedSeconds(null);
+      handledExpiry.current = null;
+      return;
+    }
+    const update = () => {
+      const remaining = Math.max(0, Math.ceil((race.timedDeadline! - Date.now()) / 1000));
+      setTimedSeconds(remaining);
+      if (remaining !== 0 || handledExpiry.current === problem.id) return;
+      handledExpiry.current = problem.id;
+      if (problem.timedMode === "bomb") {
+        void Promise.resolve(race.expireTimedProblem?.(problem)).then(() => {
+          setBusy(false);
+          setOutput(`💥 Time expired. ${BOMB_PENALTY} points deducted.`);
+          notify({
+            tone: "error",
+            title: "Bomb exploded",
+            message: `${BOMB_PENALTY} points were deducted. Choose another climb when you're ready.`,
+          });
+        }).catch((reason) => {
+          setOutput(`The bomb expired, but the penalty could not be saved:\n${reason instanceof Error ? reason.message : String(reason)}`);
+          notify({
+            tone: "error",
+            title: "Penalty could not be saved",
+            message: "Check your connection, then give up this expired problem to continue.",
+          });
+        });
+      } else {
+        notify({
+          tone: "warning",
+          title: "2× window expired",
+          message: "You can keep solving this problem for its normal point value.",
+        });
+      }
+    };
+    update();
+    const intervalId = window.setInterval(update, 250);
+    return () => window.clearInterval(intervalId);
+  }, [notify, race.activeProblem, race.expireTimedProblem, race.timedDeadline]);
 
   const selectDifficulty = (difficulty: Difficulty) => {
     const result = race.selectProblem(difficulty);
@@ -216,15 +264,25 @@ function GameShell({
       }
     }
 
-    const points = getProblemReward(problem);
     const bonus = getProblemBonus(problem);
     try {
-      await race.solve(problem);
-      setOutput(`✓ All ${problem.testCases.length} tests passed!\n+${points} points (${bonus} difficulty bonus) — summit reached.`);
+      const points = await race.solve(problem);
+      const challengeWin = Boolean(race.headToHead);
+      const doubled = !challengeWin && points === getProblemReward(problem) * 2;
+      const rewardLabel = challengeWin
+        ? " (head-to-head result)"
+        : doubled
+          ? " (2× timed bonus!)"
+          : ` (${bonus} difficulty bonus)`;
+      setOutput(`✓ All ${problem.testCases.length} tests passed!\n+${points} points${rewardLabel} — summit reached.`);
       notify({
         tone: "success",
         title: `+${points} points`,
-        message: `${problem.title} completed with a +${bonus} difficulty bonus.`,
+        message: challengeWin
+          ? `${problem.title} won the head-to-head race.`
+          : doubled
+          ? `${problem.title} completed before the deadline for double points.`
+          : `${problem.title} completed with a +${bonus} difficulty bonus.`,
       });
       confetti({
         particleCount: 110,
@@ -232,7 +290,7 @@ function GameShell({
         origin: { y: 0.68 },
         colors: ["#38bdf8", "#34d399", "#fbbf24", "#a78bfa"],
       });
-      if (race.solvedIds.length + 1 === bank.problems.length) {
+      if (!challengeWin && race.solvedIds.length + 1 === bank.problems.length) {
         notify({
           tone: "success",
           title: "Race complete",
@@ -298,6 +356,20 @@ function GameShell({
         onReset={onReset}
       />
 
+      {race.activeProblem?.timedMode && timedSeconds !== null && (
+        <div className={`mx-auto mt-4 flex max-w-[1560px] items-center justify-between rounded-xl border px-4 py-3 text-sm font-black ${
+          race.activeProblem.timedMode === "bomb"
+            ? "border-rose-400/40 bg-rose-400/10 text-rose-100"
+            : "border-amber-400/40 bg-amber-400/10 text-amber-100"
+        }`}>
+          <span className="flex items-center gap-2">
+            {race.activeProblem.timedMode === "bomb" ? <Bomb size={18} /> : <Zap size={18} />}
+            {race.activeProblem.timedMode === "bomb" ? "Bomb problem" : "2× bonus problem"}
+          </span>
+          <span className="font-mono text-lg">{formatCountdown(timedSeconds)}</span>
+        </div>
+      )}
+
       <main className="mx-auto grid max-w-[1600px] gap-4 px-4 py-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(330px,0.75fr)] lg:px-6">
         <Workspace problem={race.activeProblem} code={race.editorCode} onCodeChange={race.setEditorCode} />
         <aside className="grid content-start gap-4">
@@ -328,6 +400,22 @@ function GameShell({
             onCancel={stopExecution}
           />
           <LeaderboardTicker racers={race.racers} events={race.events} simulated={simulated} />
+          {race.requestChallenge && (
+            <ChallengePanel
+              challenge={race.challenge ?? null}
+              streak={race.currentStreak ?? 0}
+              canChallenge={Boolean(race.canChallenge)}
+              onChallenge={(difficulty) => {
+                void race.requestChallenge?.(difficulty).catch((reason) => {
+                  notify({
+                    tone: "error",
+                    title: "Challenge could not start",
+                    message: reason instanceof Error ? reason.message : String(reason),
+                  });
+                });
+              }}
+            />
+          )}
         </aside>
       </main>
 
@@ -342,6 +430,41 @@ function GameShell({
       </footer>
 
       {solutionProblem && <SolutionModal problem={solutionProblem} onClose={() => setSolutionProblem(null)} />}
+      {race.pendingProblem?.timedMode && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/80 p-5 backdrop-blur-sm">
+          <section className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${
+            race.pendingProblem.timedMode === "bomb"
+              ? "border-rose-400/35 bg-[#1a0c16]"
+              : "border-amber-400/35 bg-[#19150a]"
+          }`}>
+            <div className={`grid size-14 place-items-center rounded-2xl ${
+              race.pendingProblem.timedMode === "bomb"
+                ? "bg-rose-400/15 text-rose-300"
+                : "bg-amber-400/15 text-amber-300"
+            }`}>
+              {race.pendingProblem.timedMode === "bomb" ? <Bomb size={28} /> : <Zap size={28} />}
+            </div>
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.2em] text-slate-500">Timed problem ahead</p>
+            <h2 className="mt-2 text-2xl font-black text-white">
+              {race.pendingProblem.timedMode === "bomb" ? "Defuse the bomb" : "Double-point sprint"}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              You will have {formatCountdown(TIMED_PROBLEM_SECONDS[race.pendingProblem.difficulty])} once you start. {race.pendingProblem.timedMode === "bomb"
+                ? `If time expires, the problem closes and you lose ${BOMB_PENALTY} points.`
+                : "Finish before time expires to earn twice the normal points; afterward, you may continue for normal points."}
+            </p>
+            <button
+              type="button"
+              onClick={() => race.startPendingProblem?.()}
+              className={`mt-6 w-full rounded-xl px-4 py-3 text-sm font-black text-slate-950 ${
+                race.pendingProblem.timedMode === "bomb" ? "bg-rose-300" : "bg-amber-300"
+              }`}
+            >
+              Start {formatCountdown(TIMED_PROBLEM_SECONDS[race.pendingProblem.difficulty])} timer
+            </button>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -555,6 +678,10 @@ function ActivePlayerGame({
     recordMiss: room.recordMiss,
     recordSolve: room.recordSolve,
     recordForfeit: room.recordForfeit,
+    recordBombExpiry: room.recordBombExpiry,
+    requestChallenge: room.requestChallenge,
+    recordChallengeSolve: room.recordChallengeSolve,
+    challenge: room.challenge,
   });
 
   return (

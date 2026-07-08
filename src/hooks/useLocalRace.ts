@@ -8,6 +8,7 @@ import {
 import { DIFFICULTY_CONFIG } from "../data/difficulty";
 import { getProblemReward } from "../data/problemProgression";
 import type { Difficulty, Problem, ProblemBank } from "../data/problemTypes";
+import { BOMB_PENALTY, getTimedProblemReward, TIMED_PROBLEM_SECONDS } from "../data/timedProblems";
 import { createBotAction } from "../lib/botSimulation";
 import { getRemainingCounts, pickUnsolvedProblem } from "../lib/raceLogic";
 import type { RaceEvent, Racer } from "../types/race";
@@ -21,6 +22,8 @@ interface PersistedRace {
   score: number;
   solvedIds: string[];
   activeProblemId: string | null;
+  pendingProblemId: string | null;
+  timedDeadline: number | null;
   editorCode: string;
   stdin: string;
   botScores: Record<string, number>;
@@ -40,6 +43,8 @@ const initialState: PersistedRace = {
   score: 0,
   solvedIds: [],
   activeProblemId: null,
+  pendingProblemId: null,
+  timedDeadline: null,
   editorCode: "",
   stdin: "",
   botScores: INITIAL_BOTS,
@@ -102,6 +107,8 @@ export function useLocalRace(bank: ProblemBank, active = true) {
       setState((current) => ({
         ...current,
         activeProblemId: null,
+        pendingProblemId: null,
+        timedDeadline: null,
         editorCode: "",
         stdin: "",
       }));
@@ -150,11 +157,15 @@ export function useLocalRace(bank: ProblemBank, active = true) {
     () => bank.problems.find((problem) => problem.id === state.activeProblemId) ?? null,
     [bank.problems, state.activeProblemId],
   );
+  const pendingProblem = useMemo(
+    () => bank.problems.find((problem) => problem.id === state.pendingProblemId) ?? null,
+    [bank.problems, state.pendingProblemId],
+  );
 
   const selectProblem = useCallback(
     (difficulty: Difficulty): "selected" | "active" | "exhausted" => {
       if (!activeRef.current) return "exhausted";
-      if (stateRef.current.activeProblemId) return "active";
+      if (stateRef.current.activeProblemId || stateRef.current.pendingProblemId) return "active";
       const problem = pickUnsolvedProblem(
         bank.problems,
         difficulty,
@@ -162,25 +173,59 @@ export function useLocalRace(bank: ProblemBank, active = true) {
         stateRef.current.adaptiveProfiles[difficulty],
       );
       if (!problem) return "exhausted";
-      setState((current) => ({
-        ...current,
-        activeProblemId: problem.id,
-        editorCode: problem.starterCode,
-        stdin: problem.testCases[0]?.input ?? "",
-      }));
+      setState((current) =>
+        problem.timedMode
+          ? { ...current, pendingProblemId: problem.id }
+          : {
+              ...current,
+              activeProblemId: problem.id,
+              editorCode: problem.starterCode,
+              stdin: problem.testCases[0]?.input ?? "",
+            },
+      );
       return "selected";
     },
     [bank.problems],
   );
 
+  const startPendingProblem = useCallback(() => {
+    setState((current) => {
+      const problem = bank.problems.find((item) => item.id === current.pendingProblemId);
+      if (!problem) return current;
+      return {
+        ...current,
+        pendingProblemId: null,
+        activeProblemId: problem.id,
+        editorCode: problem.starterCode,
+        stdin: problem.testCases[0]?.input ?? "",
+        timedDeadline: Date.now() + TIMED_PROBLEM_SECONDS[problem.difficulty] * 1000,
+      };
+    });
+  }, [bank.problems]);
+
   const solve = useCallback((problem: Problem) => {
-    if (!activeRef.current) return;
-    const points = getProblemReward(problem);
+    if (!activeRef.current) return 0;
+    if (stateRef.current.activeProblemId !== problem.id) {
+      throw new Error("This problem is no longer active.");
+    }
+    if (
+      problem.timedMode === "bomb" &&
+      stateRef.current.timedDeadline !== null &&
+      Date.now() > stateRef.current.timedDeadline
+    ) {
+      throw new Error("The bomb timer expired before the solution was submitted.");
+    }
+    const awardedPoints = getTimedProblemReward(
+      getProblemReward(problem),
+      problem.timedMode,
+      stateRef.current.timedDeadline,
+      Date.now(),
+    );
     setState((current) => {
       if (current.solvedIds.includes(problem.id)) return current;
       return {
         ...current,
-        score: current.score + points,
+        score: current.score + awardedPoints,
         adaptiveProfiles: {
           ...current.adaptiveProfiles,
           [problem.difficulty]: updateAdaptiveProfile(
@@ -190,11 +235,13 @@ export function useLocalRace(bank: ProblemBank, active = true) {
         },
         solvedIds: [...current.solvedIds, problem.id],
         activeProblemId: null,
+        timedDeadline: null,
         editorCode: "",
         stdin: "",
-        events: [event(`You solved ${problem.title} (+${points})`, "good"), ...current.events].slice(0, 12),
+        events: [event(`You solved ${problem.title} (+${awardedPoints})`, "good"), ...current.events].slice(0, 12),
       };
     });
+    return awardedPoints;
   }, []);
 
   const forfeit = useCallback((problem: Problem) => {
@@ -211,6 +258,7 @@ export function useLocalRace(bank: ProblemBank, active = true) {
         ),
       },
       activeProblemId: null,
+      timedDeadline: null,
       editorCode: "",
       stdin: "",
       events: [event(`You gave up ${problem.title} (-${penalty})`, "bad"), ...current.events].slice(0, 12),
@@ -221,6 +269,29 @@ export function useLocalRace(bank: ProblemBank, active = true) {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     setState({ ...initialState, botScores: { ...INITIAL_BOTS } });
+  }, []);
+
+  const expireTimedProblem = useCallback((problem: Problem) => {
+    if (problem.timedMode !== "bomb") return;
+    setState((current) => {
+      if (current.activeProblemId !== problem.id) return current;
+      return {
+        ...current,
+        score: current.score - BOMB_PENALTY,
+        activeProblemId: null,
+        editorCode: "",
+        stdin: "",
+        timedDeadline: null,
+        adaptiveProfiles: {
+          ...current.adaptiveProfiles,
+          [problem.difficulty]: updateAdaptiveProfile(
+            current.adaptiveProfiles[problem.difficulty],
+            "forfeited",
+          ),
+        },
+        events: [event(`${problem.title} exploded (-${BOMB_PENALTY})`, "bad"), ...current.events].slice(0, 12),
+      };
+    });
   }, []);
 
   const recordMiss = useCallback((problem: Problem) => {
@@ -256,10 +327,13 @@ export function useLocalRace(bank: ProblemBank, active = true) {
   return {
     ...state,
     activeProblem,
+    pendingProblem,
     racers,
     rank,
     remaining,
     selectProblem,
+    startPendingProblem,
+    expireTimedProblem,
     solve,
     forfeit,
     recordMiss,

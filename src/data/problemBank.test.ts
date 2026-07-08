@@ -30,10 +30,34 @@ describe("versioned problem banks", () => {
     ).toEqual({ easy: 70, medium: 70, hard: 70 });
   });
 
-  it("keeps v1 available while using v2 as the latest release", async () => {
-    expect(LATEST_BANK_VERSION).toBe("v2");
-    expect(getAvailableBankVersions()).toEqual(["v1", "v2"]);
-    expect((await loadProblemBank()).version).toBe("v2");
+  it("loads the beginner-expanded 242-problem v3 bank", async () => {
+    const bank = await loadProblemBank("v3");
+    expect(bank.problems).toHaveLength(242);
+    expect(
+      bank.problems.reduce<Record<string, number>>((counts, problem) => {
+        counts[problem.difficulty] = (counts[problem.difficulty] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toEqual({ easy: 102, medium: 70, hard: 70 });
+  });
+
+  it("loads the 300-problem v4 event bank", async () => {
+    const bank = await loadProblemBank("v4");
+    expect(bank.problems).toHaveLength(300);
+    expect(
+      bank.problems.reduce<Record<string, number>>((counts, problem) => {
+        counts[problem.difficulty] = (counts[problem.difficulty] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toEqual({ easy: 122, medium: 89, hard: 89 });
+    expect(bank.problems.some((problem) => problem.timedMode === "bomb")).toBe(true);
+    expect(bank.problems.some((problem) => problem.timedMode === "double")).toBe(true);
+  });
+
+  it("keeps older banks available while using v4 as the latest release", async () => {
+    expect(LATEST_BANK_VERSION).toBe("v4");
+    expect(getAvailableBankVersions()).toEqual(["v1", "v2", "v3", "v4"]);
+    expect((await loadProblemBank()).version).toBe("v4");
   });
 
   it("has distinct IDs and titles, examples, and at least three tests", async () => {

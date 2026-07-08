@@ -1,6 +1,7 @@
 import { CURRICULUM_TOPICS, getProblemTopic } from "./curriculum";
 import { DIFFICULTIES, DIFFICULTY_CONFIG } from "./difficulty";
 import type { Difficulty, Problem, ProblemBank } from "./problemTypes";
+import { timedModeForPosition } from "./timedProblems";
 
 export const BONUS_RANGES: Record<Difficulty, { minimum: number; maximum: number }> = {
   easy: { minimum: 20, maximum: 30 },
@@ -57,6 +58,7 @@ export function applyProblemProgression(bank: ProblemBank): ProblemBank {
       complexityScore,
       progressionOrder: index + 1,
       bonusPoints: bonusForPosition(difficulty, index, problems.length),
+      timedMode: timedModeForPosition(bank.version, index, problems.length),
     }));
   });
   return { ...bank, problems: ranked };

@@ -51,14 +51,16 @@ This command runs judging, adaptive selection, ranking, countdown, and bank test
 
 ## Current milestone
 
-- 210 challenges in v2 (70 per difficulty), including Functions, Modules, and Classes
+- 300 challenges in v4 (122 easy, 89 medium, 89 hard), ranging from first-print foundations through graphs and dynamic programming
+- Bomb problems on easier tier content and double-point sprints on harder tier content, with 1:00/1:30/2:00 clocks
+- Five-streak multiplayer challenges against the current leader with category selection and head-to-head rewards
 - Monaco editor and a pinned Pyodide v0.25.0 Web Worker
 - Ordered curriculum topic selection with automatic prerequisite inclusion
 - Randomized adaptive progression within each tier, with safe onboarding, stretch challenges, and per-problem difficulty bonuses
 - Five-minute solo sprints with simulated peers, persistent countdown, and frozen results
 - Google-authenticated multiplayer with cross-device resume, timed or unlimited rooms, live standings, results, and rematches
 
-The original 90-problem v1 bank remains immutable. The current v2 bank adds 120 distinct challenges and keeps v1 available for active rooms.
+The v1, v2, and v3 banks remain immutable for active rooms. The current v4 bank adds 58 distinct challenges and the timed-event metadata without changing older rooms.
 
 Adaptive selection runs entirely in the app—no AI or paid API is used. Solo profiles remain in local storage. Signed-in room players store a small per-difficulty profile in Realtime Database so their level follows them when they resume on another device. Solves and streaks move the challenge window upward; failed submissions and forfeits move it back toward productive practice. The final problem is still randomly sampled from that window, so students following the same topics and difficulty do not receive a fixed identical sequence.
 
