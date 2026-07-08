@@ -1,4 +1,4 @@
-# Authoring PyClimb problems
+# Authoring Col problems
 
 Published bank versions are immutable because active multiplayer rooms pin their version. To change, add, remove, or reclassify a published problem, create a new bank first:
 

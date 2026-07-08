@@ -33,7 +33,7 @@ export function RoomLobby({
       <div className="mx-auto w-full max-w-4xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-sky-300">PyClimb room</p>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-sky-300">Col room</p>
             <div className="mt-1 flex items-center gap-3">
               <h1 className="font-mono text-3xl font-black tracking-[0.24em] text-white">{code}</h1>
               <button

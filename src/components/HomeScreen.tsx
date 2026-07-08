@@ -1,5 +1,6 @@
-import { ArrowRight, Gamepad2, LoaderCircle, Mountain, Radio, Users } from "lucide-react";
+import { ArrowRight, Gamepad2, LoaderCircle, Radio, Users } from "lucide-react";
 import { useState } from "react";
+import { BrandLogo } from "./BrandLogo";
 
 interface HomeScreenProps {
   configured: boolean;
@@ -29,10 +30,11 @@ export function HomeScreen({ configured, onSolo, onCreateRoom, onJoinRoom }: Hom
     <main className="grid-glow min-h-screen bg-[#070b16] px-4 py-10 text-slate-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col justify-center">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 grid size-16 place-items-center rounded-2xl bg-sky-400 text-slate-950 shadow-xl shadow-sky-500/20">
-            <Mountain size={34} strokeWidth={2.7} />
-          </div>
-          <h1 className="text-4xl font-black tracking-tight text-white sm:text-5xl">PyClimb</h1>
+          <BrandLogo
+            alt="Col logo"
+            className="mx-auto mb-4 size-20 rounded-2xl object-contain shadow-xl shadow-sky-500/20"
+          />
+          <h1 className="text-4xl font-black tracking-tight text-white sm:text-5xl">Col</h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-400 sm:text-base">
             Race your classmates up a mountain of beginner Python challenges.
           </p>

@@ -3,11 +3,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   LoaderCircle,
-  Mountain,
   RefreshCw,
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { BrandLogo } from "./components/BrandLogo";
 import { Console } from "./components/Console";
 import { useFeedback } from "./components/Feedback";
 import { HomeScreen } from "./components/HomeScreen";
@@ -64,9 +64,13 @@ function LoadingScreen({ error, onRetry }: { error?: string; onRetry?: () => voi
   return (
     <main className="grid min-h-screen place-items-center bg-[#070b16] p-6 text-center">
       <div>
-        <div className="mx-auto mb-5 grid size-16 place-items-center rounded-2xl bg-sky-400 text-slate-950 shadow-xl shadow-sky-500/20">
-          {error ? <AlertTriangle size={30} /> : <Mountain size={32} />}
-        </div>
+        {error ? (
+          <div className="mx-auto mb-5 grid size-16 place-items-center rounded-2xl bg-rose-400/10 text-rose-300">
+            <AlertTriangle size={30} />
+          </div>
+        ) : (
+          <BrandLogo className="mx-auto mb-5 size-16 rounded-2xl object-contain shadow-xl shadow-sky-500/20" />
+        )}
         <h1 className="text-2xl font-black text-white">
           {error ? "The trail did not load" : "Setting the course…"}
         </h1>
@@ -414,6 +418,7 @@ function PlayerRoom({ bank, room, session }: RoomPageProps) {
 
   useEffect(() => {
     if (meta.status === "lobby") {
+      localStorage.removeItem(`col.draft.${session.code}.${session.uid}`);
       localStorage.removeItem(`pyclimb.draft.${session.code}.${session.uid}`);
       void room.setReady(python.status === "ready");
     }

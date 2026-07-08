@@ -4,7 +4,8 @@ import type { Difficulty, Problem, ProblemBank } from "../data/problemTypes";
 import { getRemainingCounts, pickUnsolvedProblem } from "../lib/raceLogic";
 import type { RaceEvent, Racer } from "../types/race";
 
-const STORAGE_KEY = "pyclimb.local-race.v0";
+const STORAGE_KEY = "col.local-race.v0";
+const LEGACY_STORAGE_KEY = "pyclimb.local-race.v0";
 
 interface PersistedRace {
   score: number;
@@ -35,8 +36,14 @@ const initialState: PersistedRace = {
 
 function readRace(): PersistedRace {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<PersistedRace>;
+    const current = localStorage.getItem(STORAGE_KEY);
+    const legacy = current === null ? localStorage.getItem(LEGACY_STORAGE_KEY) : null;
+    const parsed = JSON.parse(current ?? legacy ?? "null") as Partial<PersistedRace>;
     if (!parsed || typeof parsed.score !== "number") return initialState;
+    if (legacy !== null) {
+      localStorage.setItem(STORAGE_KEY, legacy);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
     return {
       ...initialState,
       ...parsed,
@@ -141,6 +148,7 @@ export function useLocalRace(bank: ProblemBank) {
 
   const reset = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     setState({ ...initialState, botScores: { ...INITIAL_BOTS } });
   }, []);
 

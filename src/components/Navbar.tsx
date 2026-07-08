@@ -1,6 +1,7 @@
-import { Code2, Mountain, RotateCcw, Trophy } from "lucide-react";
+import { Code2, RotateCcw, Trophy } from "lucide-react";
 import { DIFFICULTIES, DIFFICULTY_CONFIG } from "../data/difficulty";
 import type { Difficulty } from "../data/problemTypes";
+import { BrandLogo } from "./BrandLogo";
 
 interface NavbarProps {
   score: number;
@@ -33,12 +34,10 @@ export function Navbar({
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#070b16]/90 backdrop-blur-xl">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3 lg:px-6">
         <div className="mr-auto flex items-center gap-3">
-          <div className="grid size-10 place-items-center rounded-xl bg-sky-400 text-slate-950 shadow-lg shadow-sky-500/20">
-            <Mountain size={23} strokeWidth={2.7} />
-          </div>
+          <BrandLogo className="size-10 rounded-xl object-contain shadow-lg shadow-sky-500/20" />
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-lg font-black tracking-tight text-white">PyClimb</span>
+              <span className="text-lg font-black tracking-tight text-white">Col</span>
               <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-sky-200">
                 Sprint
               </span>

@@ -12,13 +12,21 @@ import type {
 } from "../types/multiplayer";
 import type { RaceEvent } from "../types/race";
 
-const SESSION_KEY = "pyclimb.multiplayer-session.v0";
+const SESSION_KEY = "col.multiplayer-session.v0";
+const LEGACY_SESSION_KEY = "pyclimb.multiplayer-session.v0";
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const EMPTY_PROGRESS: PlayerProgress = { score: 0, solvedCount: 0, solved: {} };
 
 function readSession(): RoomSession | null {
   try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as RoomSession | null;
+    const current = localStorage.getItem(SESSION_KEY);
+    const legacy = current === null ? localStorage.getItem(LEGACY_SESSION_KEY) : null;
+    const session = JSON.parse(current ?? legacy ?? "null") as RoomSession | null;
+    if (session && legacy !== null) {
+      localStorage.setItem(SESSION_KEY, legacy);
+      localStorage.removeItem(LEGACY_SESSION_KEY);
+    }
+    return session;
   } catch {
     return null;
   }
@@ -49,6 +57,7 @@ export function useRaceRoom(bank: ProblemBank) {
     setSessionState(next);
     if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
     else localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(LEGACY_SESSION_KEY);
   }, []);
 
   useEffect(() => {

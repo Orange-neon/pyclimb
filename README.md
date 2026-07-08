@@ -1,6 +1,6 @@
-# PyClimb
+# Col
 
-PyClimb is a static Vite/React Python race. Solo Practice works without configuration. Multiplayer rooms use Firebase Anonymous Authentication and Realtime Database on the no-cost Spark plan.
+Col is a static Vite/React Python race. Solo Practice works without configuration. Multiplayer rooms use Firebase Anonymous Authentication and Realtime Database on the no-cost Spark plan.
 
 ## Local development
 
@@ -9,7 +9,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-The production site is built for the `/pyclimb/` GitHub Pages path:
+The production site is built for the `/col/` GitHub Pages path:
 
 ```powershell
 npm.cmd run build
@@ -32,10 +32,10 @@ After pulling changes that modify `database.rules.json`, republish that file fro
 
 ## Deploy to GitHub Pages
 
-1. Push this project to a GitHub repository named `pyclimb` with `main` as its default branch.
+1. Push this project to a GitHub repository named `col` with `main` as its default branch.
 2. Open Settings → Pages and choose **GitHub Actions** as the source.
 3. In Settings → Secrets and variables → Actions → Variables, create the five `VITE_FIREBASE_*` repository variables listed in `.env.example`.
-4. Push to `main` or run **Test and deploy PyClimb** manually from the Actions tab.
+4. Push to `main` or run **Test and deploy Col** manually from the Actions tab.
 5. Add `<your-github-name>.github.io` under Firebase Authentication → Settings → Authorized domains.
 
 The workflow runs problem validation, unit tests, TypeScript, and the production build before deploying `dist`.

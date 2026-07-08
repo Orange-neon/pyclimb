@@ -49,7 +49,7 @@ export function usePyodide() {
 
     const worker = new Worker(new URL("../workers/pyodide.worker.ts", import.meta.url), {
       type: "module",
-      name: "pyclimb-python",
+      name: "col-python",
     });
     workerRef.current = worker;
 

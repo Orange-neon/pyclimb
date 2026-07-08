@@ -1,4 +1,4 @@
-name: Test and deploy PyClimb
+name: Test and deploy Col
 
 on:
   push:

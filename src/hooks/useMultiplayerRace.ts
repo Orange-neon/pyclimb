@@ -13,14 +13,25 @@ interface DraftState {
 const EMPTY_DRAFT: DraftState = { activeProblemId: null, editorCode: "", stdin: "" };
 
 function draftKey(session: RoomSession) {
+  return `col.draft.${session.code}.${session.uid}`;
+}
+
+function legacyDraftKey(session: RoomSession) {
   return `pyclimb.draft.${session.code}.${session.uid}`;
 }
 
 function readDraft(session: RoomSession): DraftState {
   try {
+    const current = localStorage.getItem(draftKey(session));
+    const legacyKey = legacyDraftKey(session);
+    const legacy = current === null ? localStorage.getItem(legacyKey) : null;
+    if (legacy !== null) {
+      localStorage.setItem(draftKey(session), legacy);
+      localStorage.removeItem(legacyKey);
+    }
     return {
       ...EMPTY_DRAFT,
-      ...(JSON.parse(localStorage.getItem(draftKey(session)) ?? "null") as DraftState | null),
+      ...(JSON.parse(current ?? legacy ?? "null") as DraftState | null),
     };
   } catch {
     return EMPTY_DRAFT;
