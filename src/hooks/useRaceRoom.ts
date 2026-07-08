@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  filterProblemBankByTopics,
+  parseTopicSelection,
+  serializeTopicSelection,
+  type CurriculumTopicId,
+} from "../data/curriculum";
 import { DIFFICULTY_CONFIG } from "../data/difficulty";
 import { loadProblemBank } from "../data/problemBank";
 import type { Problem, ProblemBank } from "../data/problemTypes";
@@ -196,7 +202,11 @@ export function useRaceRoom(bank: ProblemBank) {
   );
 
   const createRoom = useCallback(
-    async (durationMinutes = 30): Promise<RoomSession> => {
+    async (topicIds: CurriculumTopicId[], durationMinutes = 30): Promise<RoomSession> => {
+      const scopedBank = filterProblemBankByTopics(bank, topicIds);
+      if (!scopedBank.problems.length) {
+        throw new Error("Choose at least one topic that has available challenges.");
+      }
       const { database, user, db } = await getFirebaseContext();
       const { ref, runTransaction } = db;
       for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -213,7 +223,8 @@ export function useRaceRoom(bank: ProblemBank) {
                     hostOnline: true,
                     status: "lobby",
                     bankVersion: bank.version,
-                    problemCount: bank.problems.length,
+                    topicIds: serializeTopicSelection(topicIds),
+                    problemCount: scopedBank.problems.length,
                     durationSeconds: durationMinutes * 60,
                     createdAt: now,
                     startedAt: null,
@@ -233,7 +244,7 @@ export function useRaceRoom(bank: ProblemBank) {
       }
       throw new Error("Could not reserve a room code. Please try again.");
     },
-    [bank.problems.length, bank.version, saveSession],
+    [bank, saveSession],
   );
 
   const joinRoom = useCallback(
@@ -255,9 +266,16 @@ export function useRaceRoom(bank: ProblemBank) {
         leaderboard?: Record<string, RoomPlayer>;
       };
       if (room.meta.status !== "lobby") throw new Error("That race has already started.");
-      await loadProblemBank(room.meta.bankVersion).catch(() => {
+      const roomBank = await loadProblemBank(room.meta.bankVersion).catch(() => {
         throw new Error(`This build does not include problem bank ${room.meta.bankVersion}.`);
       });
+      const selectedTopics = parseTopicSelection(room.meta.topicIds);
+      const scopedBank = selectedTopics
+        ? filterProblemBankByTopics(roomBank, selectedTopics)
+        : roomBank;
+      if (!scopedBank.problems.length || scopedBank.problems.length !== room.meta.problemCount) {
+        throw new Error("This room's topic selection is not compatible with this build.");
+      }
       const existingPlayers = Object.values(room.leaderboard ?? {});
       if (existingPlayers.length >= 30) throw new Error("That room is full.");
       const normalizedNickname = normalizeNickname(nickname);

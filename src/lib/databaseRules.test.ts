@@ -28,4 +28,11 @@ describe("Realtime Database rule shape", () => {
     expect(String(leaderboardUser)).toContain("hostUid");
     expect(String(progressUser)).toContain("hostUid");
   });
+
+  it("bounds optional curriculum topic metadata", () => {
+    const room = ((rules.rooms as RuleNode).$code ?? {}) as RuleNode;
+    const metaValidation = String((room.meta as RuleNode)[".validate"]);
+    expect(metaValidation).toContain("topicIds");
+    expect(metaValidation).toContain("length <= 160");
+  });
 });

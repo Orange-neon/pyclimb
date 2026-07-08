@@ -52,6 +52,7 @@ This command runs the deterministic judging, selection, ranking, countdown, and 
 
 - 90 beginner challenges in the first release bank, v1 (30 per difficulty)
 - Monaco editor and a pinned Pyodide v0.25.0 Web Worker
+- Ordered curriculum topic selection with automatic prerequisite inclusion
 - Solo race with simulated peers and browser persistence
 - Multiplayer create/join lobby, readiness, shared timer, live standings, stop, results, and rematch
 

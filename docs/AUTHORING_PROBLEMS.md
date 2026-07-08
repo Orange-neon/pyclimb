@@ -16,6 +16,8 @@ Edit `easy.ts`, `medium.ts`, or `hard.ts` in the new version folder. Each proble
 
 Difficulty controls points and penalties centrally through `src/data/difficulty.ts`. Moving an object to another tier requires updating its `difficulty` field as well.
 
+The practice selector derives each problem's curriculum topic from its tags. Prefer the canonical structural tags `conditionals`, `loops`, `while-loops`, `strings`, `lists`, `nested-lists`, `dictionaries`, `functions`, `modules`, and `classes` when they apply. Topic order and classification live in `src/data/curriculum.ts`; new structural topics should be added there before publishing a bank.
+
 Run validation and the production build before publishing:
 
 ```powershell

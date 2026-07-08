@@ -8,6 +8,7 @@ export interface RoomMeta {
   hostOnline: boolean;
   status: RoomStatus;
   bankVersion: string;
+  topicIds?: string;
   problemCount: number;
   durationSeconds: number;
   createdAt: number;

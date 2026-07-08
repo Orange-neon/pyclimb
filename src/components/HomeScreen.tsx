@@ -1,17 +1,24 @@
 import { ArrowRight, Gamepad2, LoaderCircle, Radio, Users } from "lucide-react";
 import { useState } from "react";
+import { getDefaultTopicSelection, type CurriculumTopicId } from "../data/curriculum";
+import type { ProblemBank } from "../data/problemTypes";
 import { BrandLogo } from "./BrandLogo";
+import { TopicSelector } from "./TopicSelector";
 
 interface HomeScreenProps {
+  bank: ProblemBank;
   configured: boolean;
-  onSolo: () => void;
-  onCreateRoom: () => Promise<void>;
+  onSolo: (topics: CurriculumTopicId[]) => void;
+  onCreateRoom: (topics: CurriculumTopicId[]) => Promise<void>;
   onJoinRoom: (code: string, nickname: string) => Promise<void>;
 }
 
-export function HomeScreen({ configured, onSolo, onCreateRoom, onJoinRoom }: HomeScreenProps) {
+export function HomeScreen({ bank, configured, onSolo, onCreateRoom, onJoinRoom }: HomeScreenProps) {
   const [code, setCode] = useState("");
   const [nickname, setNickname] = useState("");
+  const [topics, setTopics] = useState<CurriculumTopicId[]>(() =>
+    getDefaultTopicSelection(bank),
+  );
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +46,8 @@ export function HomeScreen({ configured, onSolo, onCreateRoom, onJoinRoom }: Hom
             Race your classmates up a mountain of beginner Python challenges.
           </p>
         </div>
+
+        <TopicSelector bank={bank} selected={topics} onChange={setTopics} />
 
         <div className="grid gap-4 md:grid-cols-2">
           <section className="panel p-6">
@@ -91,7 +100,7 @@ export function HomeScreen({ configured, onSolo, onCreateRoom, onJoinRoom }: Hom
             <button
               type="button"
               disabled={!configured || busy !== null}
-              onClick={() => perform("create", onCreateRoom)}
+              onClick={() => perform("create", () => onCreateRoom(topics))}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-200 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy === "create" ? <LoaderCircle size={17} className="animate-spin" /> : <Users size={17} />}
@@ -102,7 +111,7 @@ export function HomeScreen({ configured, onSolo, onCreateRoom, onJoinRoom }: Hom
             </div>
             <button
               type="button"
-              onClick={onSolo}
+              onClick={() => onSolo(topics)}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300 hover:bg-slate-800 hover:text-white"
             >
               <Gamepad2 size={17} /> Solo practice

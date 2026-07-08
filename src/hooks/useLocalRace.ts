@@ -79,6 +79,20 @@ export function useLocalRace(bank: ProblemBank) {
   }, [state]);
 
   useEffect(() => {
+    if (
+      stateRef.current.activeProblemId &&
+      !bank.problems.some((problem) => problem.id === stateRef.current.activeProblemId)
+    ) {
+      setState((current) => ({
+        ...current,
+        activeProblemId: null,
+        editorCode: "",
+        stdin: "",
+      }));
+    }
+  }, [bank.problems]);
+
+  useEffect(() => {
     let cancelled = false;
     const timeoutIds = new Set<number>();
 

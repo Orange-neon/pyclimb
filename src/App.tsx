@@ -18,6 +18,11 @@ import { RaceResults } from "./components/RaceResults";
 import { RoomLobby } from "./components/RoomLobby";
 import { SolutionModal } from "./components/SolutionModal";
 import { Workspace } from "./components/Workspace";
+import {
+  filterProblemBankByTopics,
+  parseTopicSelection,
+  type CurriculumTopicId,
+} from "./data/curriculum";
 import { DIFFICULTY_CONFIG } from "./data/difficulty";
 import { loadProblemBank } from "./data/problemBank";
 import type { Difficulty, Problem, ProblemBank } from "./data/problemTypes";
@@ -491,7 +496,7 @@ function ActivePlayerGame({
 
 function LoadedApp({ bank }: { bank: ProblemBank }) {
   const room = useRaceRoom(bank);
-  const [solo, setSolo] = useState(false);
+  const [soloTopics, setSoloTopics] = useState<CurriculumTopicId[] | null>(null);
   const [pinnedBank, setPinnedBank] = useState<ProblemBank | null>(null);
   const [pinnedBankError, setPinnedBankError] = useState<string | null>(null);
 
@@ -502,8 +507,12 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
       setPinnedBankError(null);
       return;
     }
+    const scopeBank = (source: ProblemBank) => {
+      const topics = parseTopicSelection(room.meta?.topicIds);
+      return topics ? filterProblemBankByTopics(source, topics) : source;
+    };
     if (version === bank.version) {
-      setPinnedBank(bank);
+      setPinnedBank(scopeBank(bank));
       setPinnedBankError(null);
       return;
     }
@@ -513,7 +522,7 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
     setPinnedBankError(null);
     loadProblemBank(version)
       .then((loadedBank) => {
-        if (!cancelled) setPinnedBank(loadedBank);
+        if (!cancelled) setPinnedBank(scopeBank(loadedBank));
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -523,16 +532,24 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
     return () => {
       cancelled = true;
     };
-  }, [bank, room.meta?.bankVersion]);
+  }, [bank, room.meta?.bankVersion, room.meta?.topicIds]);
 
-  if (solo) return <LocalGame bank={bank} onExit={() => setSolo(false)} />;
+  if (soloTopics) {
+    return (
+      <LocalGame
+        bank={filterProblemBankByTopics(bank, soloTopics)}
+        onExit={() => setSoloTopics(null)}
+      />
+    );
+  }
   if (!room.session) {
     return (
       <HomeScreen
+        bank={bank}
         configured={room.configured}
-        onSolo={() => setSolo(true)}
-        onCreateRoom={async () => {
-          await room.createRoom();
+        onSolo={setSoloTopics}
+        onCreateRoom={async (topics) => {
+          await room.createRoom(topics);
         }}
         onJoinRoom={async (code, nickname) => {
           await room.joinRoom(code, nickname);
