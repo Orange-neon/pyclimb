@@ -127,7 +127,11 @@ export async function signInWithGoogle(): Promise<GoogleUserProfile> {
       if (code !== "auth/credential-already-in-use" && code !== "auth/email-already-in-use") {
         throw reason;
       }
-      result = await authApi.signInWithPopup(auth, provider);
+      const credential = authApi.GoogleAuthProvider.credentialFromError(
+        reason as Parameters<typeof authApi.GoogleAuthProvider.credentialFromError>[0],
+      );
+      if (!credential) throw reason;
+      result = await authApi.signInWithCredential(auth, credential);
     }
   } else {
     result = await authApi.signInWithPopup(auth, provider);

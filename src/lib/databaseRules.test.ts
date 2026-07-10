@@ -69,9 +69,14 @@ describe("Realtime Database rule shape", () => {
   it("protects streak-gated leader challenges and challenge awards", () => {
     const room = ((rules.rooms as RuleNode).$code ?? {}) as RuleNode;
     const challenge = room.challenge as RuleNode;
-    expect(String(challenge[".write"])).toContain("currentStreak");
-    expect(String(challenge[".write"])).toContain("championUid");
-    expect(String(challenge[".write"])).toContain("winnerUid");
+    const challengeWrite = String(challenge[".write"]);
+    expect(challengeWrite).toContain("meta/unlimited");
+    expect(challengeWrite).toContain("val() !== true");
+    expect(challengeWrite).toContain("child($code).child('meta/status').val() === 'active'");
+    expect(challengeWrite).toContain("child('leaderboard').child(auth.uid)");
+    expect(challengeWrite).toContain("child('progress').child(auth.uid).child('currentStreak')");
+    expect(challengeWrite).toContain("championUid");
+    expect(challengeWrite).toContain("winnerUid");
     expect(String(challenge[".validate"])).toContain("problemReward");
     const progress = ((room.progress as RuleNode).$uid ?? {}) as RuleNode;
     const awards = ((progress.challengeAwards as RuleNode).$challengeId ?? {}) as RuleNode;
