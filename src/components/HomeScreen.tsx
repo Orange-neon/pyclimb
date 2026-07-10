@@ -13,6 +13,7 @@ interface HomeScreenProps {
   authLoading: boolean;
   onSignIn: () => Promise<void>;
   onSignOut: () => Promise<void>;
+  onProfile: () => void;
   onSolo: (topics: CurriculumTopicId[]) => void;
   onCreateRoom: (topics: CurriculumTopicId[]) => Promise<void>;
   onJoinRoom: (code: string, nickname: string) => Promise<void>;
@@ -25,6 +26,7 @@ export function HomeScreen({
   authLoading,
   onSignIn,
   onSignOut,
+  onProfile,
   onSolo,
   onCreateRoom,
   onJoinRoom,
@@ -67,6 +69,15 @@ export function HomeScreen({
   return (
     <main className="grid-glow min-h-screen bg-[#070b16] px-4 py-10 text-slate-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col justify-center">
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={onProfile}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-2 text-sm font-bold text-slate-300 hover:border-sky-400/40 hover:text-white"
+          >
+            <UserRound size={16} /> Profile & history
+          </button>
+        </div>
         <div className="mb-8 text-center">
           <BrandLogo
             alt="Col logo"

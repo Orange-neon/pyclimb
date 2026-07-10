@@ -20,6 +20,7 @@ import { HostDashboard } from "./components/HostDashboard";
 import { LeaderboardTicker } from "./components/LeaderboardTicker";
 import { Navbar } from "./components/Navbar";
 import { ProblemHistory } from "./components/ProblemHistory";
+import { ProfilePage } from "./components/ProfilePage";
 import { RaceResults } from "./components/RaceResults";
 import { RoomLobby } from "./components/RoomLobby";
 import { SolutionModal } from "./components/SolutionModal";
@@ -44,7 +45,8 @@ import {
   rememberProblem,
   saveProblemHistory,
 } from "./lib/problemHistory";
-import { formatCountdown } from "./lib/raceLogic";
+import { finishRaceHistory, recordRaceProblem } from "./lib/raceHistory";
+import { formatCountdown, sortRoomPlayers } from "./lib/raceLogic";
 import type { RoomMeta, RoomSession } from "./types/multiplayer";
 import type { RaceController } from "./types/race";
 
@@ -118,6 +120,7 @@ interface GameShellProps {
   simulated?: boolean;
   roomCode?: string;
   timeRemaining?: string;
+  historyRaceId?: string;
   onReset?: () => void;
   onExit?: () => void;
 }
@@ -129,6 +132,7 @@ function GameShell({
   simulated = false,
   roomCode,
   timeRemaining,
+  historyRaceId,
   onReset,
   onExit,
 }: GameShellProps) {
@@ -144,12 +148,13 @@ function GameShell({
 
   useEffect(() => {
     if (!activeProblemId) return;
+    if (historyRaceId) recordRaceProblem(historyRaceId, activeProblemId);
     setProblemHistoryIds((current) => {
       const next = rememberProblem(current, activeProblemId);
       saveProblemHistory(next);
       return next;
     });
-  }, [activeProblemId]);
+  }, [activeProblemId, historyRaceId]);
 
   useEffect(() => {
     const problem = race.activeProblem;
@@ -269,6 +274,7 @@ function GameShell({
     const bonus = getProblemBonus(problem);
     try {
       const points = await race.solve(problem);
+      if (historyRaceId) recordRaceProblem(historyRaceId, problem.id, true);
       const challengeWin = Boolean(race.headToHead);
       const doubled = !challengeWin && points === getProblemReward(problem) * 2;
       const rewardLabel = challengeWin
@@ -509,6 +515,20 @@ function LocalGame({ bank, onExit }: { bank: ProblemBank; onExit: () => void }) 
   const python = usePyodide();
   const race = useLocalRace(bank);
   const { confirm, notify } = useFeedback();
+  const historyRaceId = `solo:${race.startedAt}`;
+
+  const archiveRace = () => {
+    finishRaceHistory({
+      id: historyRaceId,
+      mode: "solo",
+      label: "Solo practice",
+      bankVersion: bank.version,
+      score: race.score,
+      rank: race.rank,
+      playerCount: race.racers.length,
+      solvedIds: race.solvedIds,
+    });
+  };
 
   const resetRace = async () => {
     const confirmed = await confirm({
@@ -518,6 +538,7 @@ function LocalGame({ bank, onExit }: { bank: ProblemBank; onExit: () => void }) 
       tone: "danger",
     });
     if (confirmed) {
+      archiveRace();
       race.reset();
       notify({ tone: "success", title: "Solo practice reset", message: "A fresh practice run is ready." });
     }
@@ -529,8 +550,12 @@ function LocalGame({ bank, onExit }: { bank: ProblemBank; onExit: () => void }) 
       race={race}
       python={python}
       simulated
+      historyRaceId={historyRaceId}
       onReset={resetRace}
-      onExit={onExit}
+      onExit={() => {
+        archiveRace();
+        onExit();
+      }}
     />
   );
 }
@@ -622,6 +647,24 @@ function PlayerRoom({ bank, room, session }: RoomPageProps) {
   const expire = useCallback(() => room.finishRace("time"), [room.finishRace]);
   const countdown = useCountdown(meta, room.serverNow, expire);
   const timeRemaining = meta.unlimited ? "Unlimited" : countdown;
+  const historyRaceId = `room:${session.code}:${session.uid}:${meta.startedAt ?? meta.createdAt}`;
+
+  useEffect(() => {
+    if (meta.status !== "finished") return;
+    const standings = sortRoomPlayers(room.players);
+    const rank = standings.findIndex((player) => player.uid === session.uid) + 1;
+    finishRaceHistory({
+      id: historyRaceId,
+      mode: "multiplayer",
+      label: `Room ${session.code}`,
+      bankVersion: meta.bankVersion,
+      finishedAt: meta.endedAt ?? Date.now(),
+      score: room.progress.score,
+      rank: rank || standings.length || 1,
+      playerCount: standings.length,
+      solvedIds: Object.keys(room.progress.solved ?? {}),
+    });
+  }, [historyRaceId, meta.bankVersion, meta.endedAt, meta.status, room.players, room.progress.score, room.progress.solved, session.code, session.uid]);
 
   useEffect(() => {
     if (meta.status === "lobby") {
@@ -665,6 +708,7 @@ function PlayerRoom({ bank, room, session }: RoomPageProps) {
       session={session}
       python={python}
       timeRemaining={timeRemaining}
+      historyRaceId={historyRaceId}
     />
   );
 }
@@ -675,7 +719,8 @@ function ActivePlayerGame({
   session,
   python,
   timeRemaining,
-}: RoomPageProps & { python: PythonController; timeRemaining: string }) {
+  historyRaceId,
+}: RoomPageProps & { python: PythonController; timeRemaining: string; historyRaceId: string }) {
   const race = useMultiplayerRace({
     bank,
     session,
@@ -698,6 +743,7 @@ function ActivePlayerGame({
       python={python}
       roomCode={session.code}
       timeRemaining={timeRemaining}
+      historyRaceId={historyRaceId}
     />
   );
 }
@@ -705,6 +751,7 @@ function ActivePlayerGame({
 function LoadedApp({ bank }: { bank: ProblemBank }) {
   const room = useRaceRoom(bank);
   const [soloTopics, setSoloTopics] = useState<CurriculumTopicId[] | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
   const [pinnedBank, setPinnedBank] = useState<ProblemBank | null>(null);
   const [pinnedBankError, setPinnedBankError] = useState<string | null>(null);
 
@@ -750,6 +797,9 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
       />
     );
   }
+  if (showProfile && !room.session) {
+    return <ProfilePage bank={bank} authUser={room.authUser} onBack={() => setShowProfile(false)} />;
+  }
   if (!room.session) {
     return (
       <HomeScreen
@@ -759,6 +809,7 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
         authLoading={room.authLoading}
         onSignIn={room.signIn}
         onSignOut={room.signOut}
+        onProfile={() => setShowProfile(true)}
         onSolo={setSoloTopics}
         onCreateRoom={async (topics) => {
           await room.createRoom(topics);

@@ -9,8 +9,10 @@ import { DIFFICULTY_CONFIG } from "../data/difficulty";
 import { getProblemReward } from "../data/problemProgression";
 import type { Difficulty, Problem, ProblemBank } from "../data/problemTypes";
 import { BOMB_PENALTY, getTimedProblemReward, TIMED_PROBLEM_SECONDS } from "../data/timedProblems";
-import { createBotAction } from "../lib/botSimulation";
+import { createBotAction, createBotSolveDelay } from "../lib/botSimulation";
+import { canIssueLeaderChallenge, CHALLENGER_WIN_PRIZE } from "../lib/challengeLogic";
 import { getRemainingCounts, pickUnsolvedProblem } from "../lib/raceLogic";
+import type { RoomChallenge } from "../types/multiplayer";
 import type { RaceEvent, Racer } from "../types/race";
 
 const STORAGE_KEY = "col.local-race.v0";
@@ -18,8 +20,10 @@ const LEGACY_STORAGE_KEY = "pyclimb.local-race.v0";
 
 interface PersistedRace {
   botSimulationVersion: number;
+  startedAt: number;
   adaptiveProfiles: AdaptiveProfiles;
   score: number;
+  currentStreak: number;
   solvedIds: string[];
   activeProblemId: string | null;
   pendingProblemId: string | null;
@@ -28,6 +32,11 @@ interface PersistedRace {
   stdin: string;
   botScores: Record<string, number>;
   events: RaceEvent[];
+  challenge: SoloChallenge | null;
+}
+
+interface SoloChallenge extends RoomChallenge {
+  botSolveAt: number;
 }
 
 const INITIAL_BOTS = {
@@ -38,9 +47,11 @@ const INITIAL_BOTS = {
 };
 
 const initialState: PersistedRace = {
-  botSimulationVersion: 2,
+  botSimulationVersion: 3,
+  startedAt: Date.now(),
   adaptiveProfiles: createAdaptiveProfiles(),
   score: 0,
+  currentStreak: 0,
   solvedIds: [],
   activeProblemId: null,
   pendingProblemId: null,
@@ -49,6 +60,7 @@ const initialState: PersistedRace = {
   stdin: "",
   botScores: INITIAL_BOTS,
   events: [],
+  challenge: null,
 };
 
 function readRace(): PersistedRace {
@@ -64,6 +76,8 @@ function readRace(): PersistedRace {
     return {
       ...initialState,
       ...parsed,
+      startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : Date.now(),
+      currentStreak: Math.max(0, Number(parsed.currentStreak) || 0),
       adaptiveProfiles: {
         easy: normalizeAdaptiveProfile(parsed.adaptiveProfiles?.easy),
         medium: normalizeAdaptiveProfile(parsed.adaptiveProfiles?.medium),
@@ -75,6 +89,7 @@ function readRace(): PersistedRace {
           ? { ...INITIAL_BOTS, ...parsed.botScores }
           : { ...INITIAL_BOTS },
       events: Array.isArray(parsed.events) ? parsed.events.slice(0, 12) : [],
+      challenge: parsed.challenge ?? null,
     };
   } catch {
     return initialState;
@@ -111,6 +126,7 @@ export function useLocalRace(bank: ProblemBank, active = true) {
         timedDeadline: null,
         editorCode: "",
         stdin: "",
+        challenge: current.challenge?.status === "active" ? null : current.challenge,
       }));
     }
   }, [bank.problems]);
@@ -152,6 +168,52 @@ export function useLocalRace(bank: ProblemBank, active = true) {
       for (const timeoutId of timeoutIds) window.clearTimeout(timeoutId);
     };
   }, [active]);
+
+  useEffect(() => {
+    if (!active || state.challenge?.status !== "active") return;
+    const challengeId = state.challenge.id;
+    const finishChallenge = () => {
+      setState((current) => {
+        const challenge = current.challenge;
+        if (!challenge || challenge.id !== challengeId || challenge.status !== "active") return current;
+        const finishedAt = Date.now();
+        return {
+          ...current,
+          score: current.score - challenge.problemReward,
+          currentStreak: 0,
+          activeProblemId: null,
+          timedDeadline: null,
+          editorCode: "",
+          stdin: "",
+          botScores: {
+            ...current.botScores,
+            [challenge.championUid]:
+              (current.botScores[challenge.championUid] ?? 0) + challenge.problemReward,
+          },
+          challenge: {
+            ...challenge,
+            status: "finished",
+            winnerUid: challenge.championUid,
+            finishedAt,
+          },
+          events: [
+            event(
+              `${challenge.championName} won the head-to-head challenge (+${challenge.problemReward})`,
+              "bad",
+            ),
+            ...current.events,
+          ].slice(0, 12),
+        };
+      });
+    };
+    const remaining = state.challenge.botSolveAt - Date.now();
+    if (remaining <= 0) {
+      finishChallenge();
+      return;
+    }
+    const timeoutId = window.setTimeout(finishChallenge, remaining);
+    return () => window.clearTimeout(timeoutId);
+  }, [active, state.challenge?.botSolveAt, state.challenge?.id, state.challenge?.status]);
 
   const activeProblem = useMemo(
     () => bank.problems.find((problem) => problem.id === state.activeProblemId) ?? null,
@@ -208,24 +270,32 @@ export function useLocalRace(bank: ProblemBank, active = true) {
     if (stateRef.current.activeProblemId !== problem.id) {
       throw new Error("This problem is no longer active.");
     }
+    const activeChallenge = stateRef.current.challenge;
+    const isChallenge = Boolean(
+      activeChallenge?.status === "active" && activeChallenge.problemId === problem.id,
+    );
     if (
+      !isChallenge &&
       problem.timedMode === "bomb" &&
       stateRef.current.timedDeadline !== null &&
       Date.now() > stateRef.current.timedDeadline
     ) {
       throw new Error("The speed timer expired before the solution was submitted.");
     }
-    const awardedPoints = getTimedProblemReward(
-      getProblemReward(problem),
-      problem.timedMode,
-      stateRef.current.timedDeadline,
-      Date.now(),
-    );
+    const awardedPoints = isChallenge
+      ? CHALLENGER_WIN_PRIZE
+      : getTimedProblemReward(
+          getProblemReward(problem),
+          problem.timedMode,
+          stateRef.current.timedDeadline,
+          Date.now(),
+        );
     setState((current) => {
       if (current.solvedIds.includes(problem.id)) return current;
       return {
         ...current,
         score: current.score + awardedPoints,
+        currentStreak: current.currentStreak + 1,
         adaptiveProfiles: {
           ...current.adaptiveProfiles,
           [problem.difficulty]: updateAdaptiveProfile(
@@ -234,11 +304,27 @@ export function useLocalRace(bank: ProblemBank, active = true) {
           ),
         },
         solvedIds: [...current.solvedIds, problem.id],
+        challenge: isChallenge && current.challenge
+          ? {
+              ...current.challenge,
+              status: "finished",
+              winnerUid: "you",
+              finishedAt: Date.now(),
+            }
+          : current.challenge,
         activeProblemId: null,
         timedDeadline: null,
         editorCode: "",
         stdin: "",
-        events: [event(`You solved ${problem.title} (+${awardedPoints})`, "good"), ...current.events].slice(0, 12),
+        events: [
+          event(
+            isChallenge
+              ? `You beat ${current.challenge?.championName ?? "the leader"} in the head-to-head challenge (+${awardedPoints})`
+              : `You solved ${problem.title} (+${awardedPoints})`,
+            "good",
+          ),
+          ...current.events,
+        ].slice(0, 12),
       };
     });
     return awardedPoints;
@@ -246,10 +332,14 @@ export function useLocalRace(bank: ProblemBank, active = true) {
 
   const forfeit = useCallback((problem: Problem) => {
     if (!activeRef.current) return;
+    if (stateRef.current.challenge?.status === "active") {
+      throw new Error("A head-to-head challenge must be raced to the finish.");
+    }
     const penalty = DIFFICULTY_CONFIG[problem.difficulty].penalty;
     setState((current) => ({
       ...current,
       score: current.score - penalty,
+      currentStreak: 0,
       adaptiveProfiles: {
         ...current.adaptiveProfiles,
         [problem.difficulty]: updateAdaptiveProfile(
@@ -268,7 +358,14 @@ export function useLocalRace(bank: ProblemBank, active = true) {
   const reset = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
-    setState({ ...initialState, botScores: { ...INITIAL_BOTS } });
+    setState({
+      ...initialState,
+      startedAt: Date.now(),
+      adaptiveProfiles: createAdaptiveProfiles(),
+      botScores: { ...INITIAL_BOTS },
+      events: [],
+      challenge: null,
+    });
   }, []);
 
   const expireTimedProblem = useCallback((problem: Problem) => {
@@ -278,6 +375,7 @@ export function useLocalRace(bank: ProblemBank, active = true) {
       return {
         ...current,
         score: current.score - BOMB_PENALTY,
+        currentStreak: 0,
         activeProblemId: null,
         editorCode: "",
         stdin: "",
@@ -298,6 +396,7 @@ export function useLocalRace(bank: ProblemBank, active = true) {
     if (!activeRef.current) return;
     setState((current) => ({
       ...current,
+      currentStreak: 0,
       adaptiveProfiles: {
         ...current.adaptiveProfiles,
         [problem.difficulty]: updateAdaptiveProfile(
@@ -319,6 +418,67 @@ export function useLocalRace(bank: ProblemBank, active = true) {
 
   const rank = racers.findIndex((racer) => racer.isUser) + 1;
 
+  const requestChallenge = useCallback(async (difficulty: Difficulty) => {
+    const current = stateRef.current;
+    const standings: Racer[] = [
+      { id: "you", name: "You", score: current.score, isUser: true },
+      ...Object.entries(current.botScores).map(([name, score]) => ({ id: name, name, score })),
+    ].sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
+    const currentRank = standings.findIndex((racer) => racer.isUser) + 1;
+    if (
+      !canIssueLeaderChallenge(
+        current.currentStreak,
+        currentRank,
+        standings.length,
+        current.challenge?.status,
+      )
+    ) {
+      throw new Error("Build a five-problem streak while below first place to challenge the leader.");
+    }
+    if (current.activeProblemId || current.pendingProblemId) {
+      throw new Error("Finish or give up the current problem before challenging the leader.");
+    }
+    const champion = standings[0];
+    if (!champion || champion.isUser) throw new Error("You are already the leader.");
+    const problem = pickUnsolvedProblem(
+      bank.problems,
+      difficulty,
+      current.solvedIds,
+      current.adaptiveProfiles[difficulty],
+    );
+    if (!problem) throw new Error(`No unsolved ${difficulty} problem remains.`);
+    const now = Date.now();
+    const challenge: SoloChallenge = {
+      id: crypto.randomUUID(),
+      status: "active",
+      challengerUid: "you",
+      challengerName: "You",
+      championUid: champion.id,
+      championName: champion.name,
+      difficulty,
+      problemId: problem.id,
+      problemReward: getProblemReward(problem),
+      createdAt: now,
+      startedAt: now,
+      finishedAt: null,
+      winnerUid: null,
+      botSolveAt: now + createBotSolveDelay(difficulty),
+    };
+    setState((value) => ({
+      ...value,
+      challenge,
+      activeProblemId: problem.id,
+      pendingProblemId: null,
+      timedDeadline: null,
+      editorCode: problem.starterCode,
+      stdin: problem.testCases[0]?.input ?? "",
+      events: [
+        event(`You challenged leader ${champion.name} to a ${difficulty} race`, "neutral"),
+        ...value.events,
+      ].slice(0, 12),
+    }));
+  }, [bank.problems]);
+
   const remaining = useMemo(
     () => getRemainingCounts(bank.problems, state.solvedIds),
     [bank.problems, state.solvedIds],
@@ -331,6 +491,16 @@ export function useLocalRace(bank: ProblemBank, active = true) {
     racers,
     rank,
     remaining,
+    currentStreak: state.currentStreak,
+    challenge: state.challenge,
+    headToHead: state.challenge?.status === "active",
+    canChallenge: canIssueLeaderChallenge(
+      state.currentStreak,
+      rank,
+      racers.length,
+      state.challenge?.status,
+    ),
+    requestChallenge,
     selectProblem,
     startPendingProblem,
     expireTimedProblem,

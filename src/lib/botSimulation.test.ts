@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOT_MIN_DELAY_MS, createBotAction } from "./botSimulation";
+import { BOT_MIN_DELAY_MS, createBotAction, createBotSolveDelay } from "./botSimulation";
 
 function sequence(...values: number[]) {
   let index = 0;
@@ -37,5 +37,14 @@ describe("solo bot simulation", () => {
     expect(earliest.delayMs).toBe(minimum);
     expect(latest.delayMs).toBeGreaterThanOrEqual(minimum);
     expect(latest.delayMs).toBeLessThan(minimum * 1.5);
+  });
+
+  it("skews champion solve times toward the quicker end of the bot window", () => {
+    const minimum = BOT_MIN_DELAY_MS.medium;
+    const midpointRoll = createBotSolveDelay("medium", () => 0.5);
+
+    expect(midpointRoll).toBeGreaterThanOrEqual(minimum);
+    expect(midpointRoll).toBeLessThan(minimum * 1.25);
+    expect(createBotSolveDelay("medium", () => 0.999999)).toBeLessThan(minimum * 1.5);
   });
 });
