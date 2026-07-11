@@ -42,4 +42,17 @@ describe("problem progression and bonuses", () => {
     )!;
     expect(getProblemReward(problem)).toBe(DIFFICULTY_CONFIG.hard.points + 200);
   });
+
+  it("adds explicit instructions and a walkthrough after every given example", async () => {
+    for (const version of ["v1", "v4"]) {
+      const bank = await loadProblemBank(version);
+      for (const problem of bank.problems) {
+        expect(problem.description).toContain("## What your program needs to do");
+        expect(problem.description).toContain("### Example explained");
+        expect(problem.description.indexOf("\n### Example\n")).toBeLessThan(
+          problem.description.indexOf("\n### Example explained\n"),
+        );
+      }
+    }
+  });
 });

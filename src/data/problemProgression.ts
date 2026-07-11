@@ -3,6 +3,56 @@ import { DIFFICULTIES, DIFFICULTY_CONFIG } from "./difficulty";
 import type { Difficulty, Problem, ProblemBank } from "./problemTypes";
 import { timedModeForPosition } from "./timedProblems";
 
+function exampleValue(value: string): string {
+  return value.replace(/\n/g, " ↵ ") || "(empty input)";
+}
+
+function sectionText(description: string, heading: string): string | null {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = description.match(
+    new RegExp(`^## ${escapedHeading}\\s*\\n([\\s\\S]*?)(?=\\n#{1,3} |$)`, "m"),
+  );
+  return match?.[1].trim().replace(/\s+/g, " ") ?? null;
+}
+
+/**
+ * Older banks intentionally keep their original authored copy. This adds the
+ * same explicit task and sample walkthrough to every generation without
+ * rewriting (and potentially changing) the rules of an archived problem.
+ */
+export function addProblemGuidance(problem: Problem): Problem {
+  if (problem.description.includes("## What your program needs to do")) return problem;
+
+  const overview = problem.description
+    .replace(/^# .*\n+/, "")
+    .split(/\n#{2,3} /, 1)[0]
+    .trim()
+    .replace(/\s+/g, " ");
+  const inputRule = sectionText(problem.description, "Input") ?? "Use the supplied input values.";
+  const outputRule = sectionText(problem.description, "Output") ?? "Print the requested result.";
+  const example = problem.testCases[0];
+  const exampleLineNote = example.input.includes("\n")
+    ? "The ↵ symbol marks where the next input line begins."
+    : "This example uses one input line.";
+
+  const taskGuidance = `## What your program needs to do
+Read the input exactly as described: ${inputRule}
+
+Use those values to complete the task: ${overview}
+
+Print only the requested result, with the exact spacing and capitalization described here: ${outputRule}`;
+
+  const exampleGuidance = `### Example explained
+The example gives \`${exampleValue(example.input)}\` as input. ${exampleLineNote} Your program uses those values to complete the task described above. The result is \`${exampleValue(example.expectedOutput)}\`, so that exact value is printed.`;
+
+  const exampleHeading = problem.description.indexOf("\n### Example");
+  const description = exampleHeading === -1
+    ? `${problem.description.trim()}\n\n${taskGuidance}\n\n${exampleGuidance}`
+    : `${problem.description.slice(0, exampleHeading).trim()}\n\n${taskGuidance}\n\n${problem.description.slice(exampleHeading + 1).trim()}\n\n${exampleGuidance}`;
+
+  return { ...problem, description };
+}
+
 export const BONUS_RANGES: Record<Difficulty, { minimum: number; maximum: number }> = {
   easy: { minimum: 20, maximum: 30 },
   medium: { minimum: 50, maximum: 100 },
@@ -54,7 +104,7 @@ export function applyProblemProgression(bank: ProblemBank): ProblemBank {
           left.problem.title.localeCompare(right.problem.title),
       );
     return problems.map(({ problem, complexityScore }, index) => ({
-      ...problem,
+      ...addProblemGuidance(problem),
       complexityScore,
       progressionOrder: index + 1,
       bonusPoints: bonusForPosition(difficulty, index, problems.length),

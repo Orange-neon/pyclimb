@@ -1,4 +1,4 @@
-import { ArrowRight, Gamepad2, LoaderCircle, LogIn, LogOut, Radio, UserRound, Users } from "lucide-react";
+import { ArrowRight, Gamepad2, LoaderCircle, LogIn, LogOut, Radio, UserRound, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getDefaultTopicSelection, type CurriculumTopicId } from "../data/curriculum";
 import type { ProblemBank } from "../data/problemTypes";
@@ -38,6 +38,7 @@ export function HomeScreen({
   );
   const [busy, setBusy] = useState<"auth" | "create" | "join" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showUnlimitedSignIn, setShowUnlimitedSignIn] = useState(false);
 
   const perform = async (kind: "create" | "join", action: () => Promise<void>) => {
     setBusy(kind);
@@ -45,7 +46,12 @@ export function HomeScreen({
     try {
       await action();
     } catch (reason) {
-      setError(getFirebaseErrorMessage(reason));
+      const message = getFirebaseErrorMessage(reason);
+      if (kind === "join" && !authUser && /sign in.*unlimited room/i.test(message)) {
+        setShowUnlimitedSignIn(true);
+      } else {
+        setError(message);
+      }
       setBusy(null);
     }
   };
@@ -66,10 +72,24 @@ export function HomeScreen({
     }
   };
 
+  const signInAndRetryJoin = async () => {
+    setBusy("auth");
+    setError(null);
+    try {
+      await onSignIn();
+      setShowUnlimitedSignIn(false);
+      setBusy("join");
+      await onJoinRoom(code, nickname);
+    } catch (reason) {
+      setError(getFirebaseErrorMessage(reason));
+      setBusy(null);
+    }
+  };
+
   return (
     <main className="grid-glow min-h-screen bg-[#070b16] px-4 py-10 text-slate-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col justify-center">
-        <div className="mb-4 flex justify-end">
+        <div className="mb-6 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             onClick={onProfile}
@@ -77,6 +97,23 @@ export function HomeScreen({
           >
             <UserRound size={16} /> Profile & history
           </button>
+          {configured && (
+            <button
+              type="button"
+              disabled={authLoading || busy !== null}
+              onClick={() => performAuth(authUser ? onSignOut : onSignIn)}
+              className="inline-flex items-center gap-2 rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-sm font-black text-sky-200 hover:bg-sky-400/20 disabled:opacity-40"
+            >
+              {busy === "auth" ? (
+                <LoaderCircle size={16} className="animate-spin" />
+              ) : authUser ? (
+                <LogOut size={16} />
+              ) : (
+                <LogIn size={16} />
+              )}
+              {authLoading ? "Checking sign-in…" : authUser ? `Sign out ${authUser.displayName}` : "Sign in"}
+            </button>
+          )}
         </div>
         <div className="mb-8 text-center">
           <BrandLogo
@@ -90,37 +127,6 @@ export function HomeScreen({
         </div>
 
         <TopicSelector bank={bank} selected={topics} onChange={setTopics} />
-
-        {configured && (
-          <section className="panel mb-4 flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-            <div className="flex min-w-0 items-center gap-3">
-              {authUser?.photoURL ? (
-                <img src={authUser.photoURL} alt="" className="size-10 rounded-full" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="grid size-10 place-items-center rounded-full bg-sky-400/10 text-sky-300">
-                  <UserRound size={20} />
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="font-bold text-white">
-                  {authLoading ? "Checking sign-in…" : authUser ? authUser.displayName : "Google sign-in optional"}
-                </p>
-                <p className="truncate text-xs text-slate-500">
-                  {authUser ? authUser.email : "Required only for unlimited rooms and cross-device resume."}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              disabled={authLoading || busy !== null}
-              onClick={() => performAuth(authUser ? onSignOut : onSignIn)}
-              className="flex items-center gap-2 rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-2.5 text-sm font-black text-sky-200 disabled:opacity-40"
-            >
-              {busy === "auth" ? <LoaderCircle size={16} className="animate-spin" /> : authUser ? <LogOut size={16} /> : <LogIn size={16} />}
-              {authUser ? "Sign out" : "Continue with Google"}
-            </button>
-          </section>
-        )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <section className="panel p-6">
@@ -204,6 +210,54 @@ export function HomeScreen({
           </div>
         )}
       </div>
+      {showUnlimitedSignIn && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unlimited-sign-in-title"
+        >
+          <section className="panel relative w-full max-w-md border-violet-400/30 p-6 shadow-2xl shadow-violet-950/40">
+            <button
+              type="button"
+              onClick={() => setShowUnlimitedSignIn(false)}
+              className="absolute right-4 top-4 grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-800 hover:text-white"
+              aria-label="Close sign-in dialog"
+            >
+              <X size={18} />
+            </button>
+            <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-violet-400/10 text-violet-300">
+              <LogIn size={22} />
+            </div>
+            <h2 id="unlimited-sign-in-title" className="pr-10 text-xl font-black text-white">
+              Sign in to join this unlimited game
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              Unlimited games use Google sign-in so your place and progress can be safely restored across devices. After signing in, Col will retry joining room <strong className="font-mono text-slate-200">{code}</strong>.
+            </p>
+            {error && <p className="mt-3 text-sm font-semibold text-rose-300">{error}</p>}
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => setShowUnlimitedSignIn(false)}
+                className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={signInAndRetryJoin}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-400 px-4 py-2.5 text-sm font-black text-violet-950 hover:bg-violet-300 disabled:opacity-40"
+              >
+                {busy === "auth" || busy === "join" ? <LoaderCircle size={16} className="animate-spin" /> : <LogIn size={16} />}
+                Continue with Google
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
