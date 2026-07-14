@@ -18,7 +18,9 @@ export interface CompletedRaceHistory {
   mode: RaceHistoryMode;
   label: string;
   bankVersion: string;
+  startedAt?: number;
   finishedAt: number;
+  durationMs?: number;
   score: number;
   rank: number;
   playerCount: number;
@@ -87,6 +89,7 @@ interface FinishRaceHistoryInput {
   mode: RaceHistoryMode;
   label: string;
   bankVersion: string;
+  startedAt?: number;
   finishedAt?: number;
   score: number;
   rank: number;
@@ -109,12 +112,20 @@ export function finishRaceHistory(
       status: solved.has(problem.problemId) ? "solved" as const : problem.status,
     }))
     .sort((left, right) => right.lastUpdatedAt - left.lastUpdatedAt);
+  const finishedAt = input.finishedAt ?? Date.now();
+  const earliestProblemOpenedAt = problems.reduce(
+    (earliest, problem) => Math.min(earliest, problem.firstOpenedAt),
+    finishedAt,
+  );
+  const startedAt = Math.min(input.startedAt ?? earliestProblemOpenedAt, finishedAt);
   const completed: CompletedRaceHistory = {
     id: input.id,
     mode: input.mode,
     label: input.label,
     bankVersion: input.bankVersion,
-    finishedAt: input.finishedAt ?? Date.now(),
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, finishedAt - startedAt),
     score: input.score,
     rank: Math.max(1, input.rank),
     playerCount: Math.max(1, input.playerCount),
@@ -131,3 +142,25 @@ export function finishRaceHistory(
   return completed;
 }
 
+export function markRaceProblemSolved(
+  raceId: string,
+  problemId: string,
+  updatedAt = Date.now(),
+  storage: Storage = localStorage,
+): CompletedRaceHistory[] {
+  const races = readCompletedRaceHistory(storage);
+  let changed = false;
+  const next = races.map((race) => {
+    if (race.id !== raceId) return race;
+    let raceChanged = false;
+    const problems = race.problems.map((problem) => {
+      if (problem.problemId !== problemId || problem.status === "solved") return problem;
+      changed = true;
+      raceChanged = true;
+      return { ...problem, status: "solved" as const, lastUpdatedAt: updatedAt };
+    });
+    return raceChanged ? { ...race, problems } : race;
+  });
+  if (changed) writeJson(storage, COMPLETED_RACE_HISTORY_KEY, next);
+  return next;
+}

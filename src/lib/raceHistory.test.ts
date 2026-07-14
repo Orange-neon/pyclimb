@@ -3,6 +3,7 @@ import {
   ACTIVE_RACE_HISTORY_KEY,
   COMPLETED_RACE_HISTORY_KEY,
   finishRaceHistory,
+  markRaceProblemSolved,
   readCompletedRaceHistory,
   recordRaceProblem,
 } from "./raceHistory";
@@ -31,6 +32,7 @@ describe("completed race history", () => {
       mode: "multiplayer",
       label: "Room ABC123",
       bankVersion: "v4",
+      startedAt: 5,
       finishedAt: 40,
       score: 500,
       rank: 2,
@@ -40,12 +42,39 @@ describe("completed race history", () => {
     expect(readCompletedRaceHistory(storage)[0]).toMatchObject({
       id: "race-1",
       score: 500,
+      durationMs: 35,
       problems: [
         { problemId: "solved", status: "solved" },
         { problemId: "opened", status: "not-solved" },
       ],
     });
     expect(JSON.parse(storage.getItem(ACTIVE_RACE_HISTORY_KEY) ?? "null")).toEqual({});
+  });
+
+  it("marks a retried problem solved without removing it from history", () => {
+    const storage = memoryStorage();
+    recordRaceProblem("retry-race", "try-again", false, 10, storage);
+    finishRaceHistory({
+      id: "retry-race",
+      mode: "solo",
+      label: "Solo practice",
+      bankVersion: "v4",
+      finishedAt: 20,
+      score: 0,
+      rank: 1,
+      playerCount: 1,
+    }, storage);
+
+    const races = markRaceProblemSolved("retry-race", "try-again", 30, storage);
+
+    expect(races[0].problems).toEqual([
+      expect.objectContaining({
+        problemId: "try-again",
+        status: "solved",
+        lastUpdatedAt: 30,
+      }),
+    ]);
+    expect(readCompletedRaceHistory(storage)[0].problems).toHaveLength(1);
   });
 
   it("uses authoritative solved ids when a completed room is archived", () => {
