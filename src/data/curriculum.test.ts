@@ -31,12 +31,38 @@ describe("curriculum topic selection", () => {
   it("classifies and filters the existing bank without losing problems", async () => {
     const bank = await loadProblemBank();
     const counts = getTopicCounts(bank);
-    expect(Object.values(counts).reduce((total, count) => total + count, 0)).toBe(300);
-    expect(counts["dictionaries"]).toBeGreaterThan(0);
-    expect(counts.functions).toBeGreaterThan(0);
-    expect(counts.modules).toBeGreaterThan(0);
-    expect(counts.classes).toBeGreaterThan(0);
-    expect(filterProblemBankByTopics(bank, getDefaultTopicSelection(bank)).problems).toHaveLength(300);
+    expect(counts).toEqual({
+      "hello-world": 12,
+      fundamentals: 50,
+      "control-flow": 20,
+      loops: 28,
+      strings: 108,
+      lists: 148,
+      dictionaries: 34,
+      functions: 66,
+      modules: 66,
+      classes: 68,
+    });
+    expect(Object.values(counts).reduce((total, count) => total + count, 0)).toBe(600);
+    expect(filterProblemBankByTopics(bank, getDefaultTopicSelection(bank)).problems).toHaveLength(600);
+  });
+
+  it("doubles every topic within every difficulty tier", async () => {
+    const bank = await loadProblemBank("v5");
+    const expected = {
+      easy: [12, 42, 16, 10, 68, 20, 8, 24, 22, 22],
+      medium: [0, 0, 4, 10, 16, 64, 16, 22, 22, 24],
+      hard: [0, 8, 0, 8, 24, 64, 10, 20, 22, 22],
+    } as const;
+
+    for (const [difficulty, topicCounts] of Object.entries(expected)) {
+      const tier = bank.problems.filter((problem) => problem.difficulty === difficulty);
+      expect(
+        CURRICULUM_TOPICS.map(
+          (topic) => tier.filter((problem) => getProblemTopic(problem) === topic.id).length,
+        ),
+      ).toEqual(topicCounts);
+    }
   });
 
   it("places representative problems in their teaching topics", async () => {

@@ -44,7 +44,7 @@ describe("problem progression and bonuses", () => {
   });
 
   it("adds explicit instructions and a walkthrough after every given example", async () => {
-    for (const version of ["v1", "v4"]) {
+    for (const version of ["v1", "v4", "v5"]) {
       const bank = await loadProblemBank(version);
       for (const problem of bank.problems) {
         expect(problem.description).toContain("## What your program needs to do");

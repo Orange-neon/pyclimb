@@ -1,13 +1,14 @@
 import type { ProblemBank } from "./problemTypes";
 import { applyProblemProgression } from "./problemProgression";
 
-export const LATEST_BANK_VERSION = "v4";
+export const LATEST_BANK_VERSION = "v5";
 
 const bankLoaders: Record<string, () => Promise<ProblemBank>> = {
   v1: async () => (await import("./banks/v1")).problemBank,
   v2: async () => (await import("./banks/v2")).problemBank,
   v3: async () => (await import("./banks/v3")).problemBank,
   v4: async () => (await import("./banks/v4")).problemBank,
+  v5: async () => (await import("./banks/v5")).problemBank,
 };
 
 export function getAvailableBankVersions(): string[] {

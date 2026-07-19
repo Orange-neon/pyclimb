@@ -40,6 +40,7 @@ describe("Realtime Database rule shape", () => {
     expect(metaValidation).toContain("length <= 160");
     expect(metaValidation).toContain("unlimited");
     expect(metaValidation).toContain("isBoolean");
+    expect(metaValidation).toContain("problemCount').val() <= 600");
   });
 
   it("allows timed room writes with auth and keeps unlimited writes Google-gated", () => {

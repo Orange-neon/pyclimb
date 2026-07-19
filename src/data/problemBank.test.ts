@@ -54,10 +54,89 @@ describe("versioned problem banks", () => {
     expect(bank.problems.some((problem) => problem.timedMode === "double")).toBe(true);
   });
 
-  it("keeps older banks available while using v4 as the latest release", async () => {
-    expect(LATEST_BANK_VERSION).toBe("v4");
-    expect(getAvailableBankVersions()).toEqual(["v1", "v2", "v3", "v4"]);
-    expect((await loadProblemBank()).version).toBe("v4");
+  it("loads the 600-problem v5 bank with every difficulty tier doubled", async () => {
+    const bank = await loadProblemBank("v5");
+    expect(bank.problems).toHaveLength(600);
+    expect(
+      bank.problems.reduce<Record<string, number>>((counts, problem) => {
+        counts[problem.difficulty] = (counts[problem.difficulty] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toEqual({ easy: 244, medium: 178, hard: 178 });
+    expect(bank.problems.some((problem) => problem.timedMode === "bomb")).toBe(true);
+    expect(bank.problems.some((problem) => problem.timedMode === "double")).toBe(true);
+  });
+
+  it("adds 300 v5-only challenges without reusing an implementation or test suite", async () => {
+    const previous = await loadProblemBank("v4");
+    const current = await loadProblemBank("v5");
+    const previousIds = new Set(previous.problems.map((problem) => problem.id));
+    const additions = current.problems.filter((problem) => !previousIds.has(problem.id));
+    expect(additions).toHaveLength(300);
+    expect(additions.every((problem) => problem.id.startsWith("v5-"))).toBe(true);
+
+    const normalizeCode = (code: string) => code.replace(/\s+/g, " ").trim();
+    const testSignature = (problem: (typeof additions)[number]) =>
+      JSON.stringify(problem.testCases.map(({ input, expectedOutput }) => [input, expectedOutput]));
+    const usedSolutions = new Map(
+      previous.problems.map((problem) => [normalizeCode(problem.solutionCode), problem.id]),
+    );
+    const usedTests = new Map(
+      previous.problems.map((problem) => [testSignature(problem), problem.id]),
+    );
+    const repeatedSolutions: string[] = [];
+    const repeatedTests: string[] = [];
+
+    for (const problem of additions) {
+      const solution = normalizeCode(problem.solutionCode);
+      const tests = testSignature(problem);
+      if (usedSolutions.has(solution)) {
+        repeatedSolutions.push(`${problem.id} repeats ${usedSolutions.get(solution)}`);
+      }
+      if (usedTests.has(tests)) repeatedTests.push(`${problem.id} repeats ${usedTests.get(tests)}`);
+      usedSolutions.set(solution, problem.id);
+      usedTests.set(tests, problem.id);
+    }
+
+    expect(repeatedSolutions).toEqual([]);
+    expect(repeatedTests).toEqual([]);
+  });
+
+  it("tags the top-level Python concepts that determine curriculum placement", async () => {
+    const previousIds = new Set(
+      (await loadProblemBank("v4")).problems.map((problem) => problem.id),
+    );
+    const additions = (await loadProblemBank("v5")).problems.filter(
+      (problem) => !previousIds.has(problem.id),
+    );
+    const issues: string[] = [];
+
+    for (const problem of additions) {
+      if (
+        /(?:^|\n)(?:from\s+\S+\s+import|import\s+\S+)/.test(problem.solutionCode) &&
+        !problem.tags.includes("modules")
+      ) {
+        issues.push(`${problem.id} uses an import without the modules tag`);
+      }
+      if (/(?:^|\n)class\s+/.test(problem.solutionCode) && !problem.tags.includes("classes")) {
+        issues.push(`${problem.id} defines a class without the classes tag`);
+      }
+      if (
+        /(?:^|\n)def\s+/.test(problem.solutionCode) &&
+        !problem.tags.includes("functions") &&
+        !problem.tags.includes("classes")
+      ) {
+        issues.push(`${problem.id} defines a function without the functions tag`);
+      }
+    }
+
+    expect(issues).toEqual([]);
+  });
+
+  it("keeps older banks available while using v5 as the latest release", async () => {
+    expect(LATEST_BANK_VERSION).toBe("v5");
+    expect(getAvailableBankVersions()).toEqual(["v1", "v2", "v3", "v4", "v5"]);
+    expect((await loadProblemBank()).version).toBe("v5");
   });
 
   it("has distinct IDs and titles, examples, and at least three tests", async () => {
