@@ -25,6 +25,14 @@ import {
 } from "../lib/firebase";
 import { sortRoomPlayers } from "../lib/raceLogic";
 import { CHALLENGER_WIN_PRIZE, getChallengeScoreDelta } from "../lib/challengeLogic";
+import { generateRoomCode, isRoomCode, normalizeRoomCode } from "../lib/roomCode";
+import {
+  clearActiveRoomSession,
+  getRaceRoomSession,
+  readActiveRoomSession,
+  subscribeActiveRoomSession,
+  writeRaceRoomSession,
+} from "../lib/roomSession";
 import type {
   PlayerProgress,
   RoomChallenge,
@@ -34,9 +42,6 @@ import type {
 } from "../types/multiplayer";
 import type { RaceEvent } from "../types/race";
 
-const SESSION_KEY = "col.multiplayer-session.v0";
-const LEGACY_SESSION_KEY = "pyclimb.multiplayer-session.v0";
-const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const EMPTY_PROGRESS: PlayerProgress = {
   score: 0,
   solvedCount: 0,
@@ -62,23 +67,7 @@ function normalizeProgress(value: PlayerProgress | null): PlayerProgress {
 }
 
 function readSession(): RoomSession | null {
-  try {
-    const current = localStorage.getItem(SESSION_KEY);
-    const legacy = current === null ? localStorage.getItem(LEGACY_SESSION_KEY) : null;
-    const session = JSON.parse(current ?? legacy ?? "null") as RoomSession | null;
-    if (session && legacy !== null) {
-      localStorage.setItem(SESSION_KEY, legacy);
-      localStorage.removeItem(LEGACY_SESSION_KEY);
-    }
-    return session;
-  } catch {
-    return null;
-  }
-}
-
-function makeRoomCode(): string {
-  const values = crypto.getRandomValues(new Uint32Array(6));
-  return Array.from(values, (value) => ROOM_ALPHABET[value % ROOM_ALPHABET.length]).join("");
+  return getRaceRoomSession(readActiveRoomSession());
 }
 
 function normalizeNickname(value: string): string {
@@ -106,10 +95,17 @@ export function useRaceRoom(bank: ProblemBank) {
 
   const saveSession = useCallback((next: RoomSession | null) => {
     setSessionState(next);
-    if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    else localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(LEGACY_SESSION_KEY);
+    if (next) writeRaceRoomSession(next);
+    else clearActiveRoomSession("race");
   }, []);
+
+  useEffect(
+    () =>
+      subscribeActiveRoomSession((activeSession) => {
+        setSessionState(getRaceRoomSession(activeSession));
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
@@ -300,7 +296,7 @@ export function useRaceRoom(bank: ProblemBank) {
       const { database, user, db } = await getFirebaseContext();
       const { ref, runTransaction } = db;
       for (let attempt = 0; attempt < 8; attempt += 1) {
-        const code = makeRoomCode();
+        const code = generateRoomCode();
         const roomRef = ref(database, `rooms/${code}`);
         const now = Date.now() + serverOffsetRef.current;
         const result = await runTransaction(
@@ -340,9 +336,9 @@ export function useRaceRoom(bank: ProblemBank) {
 
   const joinRoom = useCallback(
     async (rawCode: string, rawNickname: string): Promise<RoomSession> => {
-      const code = rawCode.trim().toUpperCase();
+      const code = normalizeRoomCode(rawCode);
       const nickname = rawNickname.trim().replace(/\s+/g, " ");
-      if (!/^[A-Z2-9]{6}$/.test(code)) throw new Error("Enter a valid six-character room code.");
+      if (!isRoomCode(code)) throw new Error("Enter a valid six-character room code.");
 
       const { database, user, db } = await getFirebaseContext();
       const { get, push, ref, set, update } = db;

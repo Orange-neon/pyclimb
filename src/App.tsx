@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BrandLogo } from "./components/BrandLogo";
 import { Console } from "./components/Console";
 import { ChallengePanel } from "./components/ChallengePanel";
+import { CollaborationNotebook } from "./components/CollaborationNotebook";
 import { useFeedback } from "./components/Feedback";
 import { HomeScreen } from "./components/HomeScreen";
 import { HostDashboard } from "./components/HostDashboard";
@@ -36,6 +37,7 @@ import { getProblemBonus, getProblemReward } from "./data/problemProgression";
 import type { Difficulty, Problem, ProblemBank } from "./data/problemTypes";
 import { BOMB_PENALTY, TIMED_PROBLEM_SECONDS } from "./data/timedProblems";
 import { useLocalRace } from "./hooks/useLocalRace";
+import { useCollaborationRoom } from "./hooks/useCollaborationRoom";
 import { useMultiplayerRace } from "./hooks/useMultiplayerRace";
 import { usePyodide } from "./hooks/usePyodide";
 import { useRaceRoom } from "./hooks/useRaceRoom";
@@ -752,6 +754,9 @@ function ActivePlayerGame({
 
 function LoadedApp({ bank }: { bank: ProblemBank }) {
   const room = useRaceRoom(bank);
+  const collaboration = useCollaborationRoom();
+  const homeAuthUser = room.authUser ?? collaboration.authUser;
+  const collaborationRelayHost = (import.meta.env.VITE_COLLAB_RELAY_HOST as string | undefined)?.trim() ?? "";
   const [soloTopics, setSoloTopics] = useState<CurriculumTopicId[] | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [pinnedBank, setPinnedBank] = useState<ProblemBank | null>(null);
@@ -791,6 +796,33 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
     };
   }, [bank, room.meta?.bankVersion, room.meta?.topicIds]);
 
+  if (collaboration.session) {
+    if (!collaborationRelayHost) {
+      return (
+        <LoadingScreen
+          error="This build does not have a collaboration relay configured."
+          onRetry={() => void collaboration.leaveRoom()}
+        />
+      );
+    }
+    if (collaboration.loading) return <LoadingScreen />;
+    if (!collaboration.meta) {
+      return (
+        <LoadingScreen
+          error={collaboration.error ?? "The collaboration room could not be loaded."}
+          onRetry={() => void collaboration.leaveRoom()}
+        />
+      );
+    }
+    return (
+      <CollaborationNotebook
+        session={collaboration.session}
+        relayHost={collaborationRelayHost}
+        getIdToken={collaboration.getIdToken}
+        onLeave={collaboration.leaveRoom}
+      />
+    );
+  }
   if (soloTopics) {
     return (
       <LocalGame
@@ -800,15 +832,17 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
     );
   }
   if (showProfile && !room.session) {
-    return <ProfilePage bank={bank} authUser={room.authUser} onBack={() => setShowProfile(false)} />;
+    return <ProfilePage bank={bank} authUser={homeAuthUser} onBack={() => setShowProfile(false)} />;
   }
   if (!room.session) {
     return (
       <HomeScreen
         bank={bank}
         configured={room.configured}
-        authUser={room.authUser}
-        authLoading={room.authLoading}
+        collaborationConfigured={collaboration.configured && Boolean(collaborationRelayHost)}
+        collaborationError={collaboration.error}
+        authUser={homeAuthUser}
+        authLoading={room.authLoading || collaboration.authLoading}
         onSignIn={room.signIn}
         onSignOut={room.signOut}
         onProfile={() => setShowProfile(true)}
@@ -818,6 +852,13 @@ function LoadedApp({ bank }: { bank: ProblemBank }) {
         }}
         onJoinRoom={async (code, nickname) => {
           await room.joinRoom(code, nickname);
+        }}
+        onCreateCollaborationRoom={async () => {
+          if (!homeAuthUser) await collaboration.signIn();
+          await collaboration.createRoom();
+        }}
+        onJoinCollaborationRoom={async (code, nickname) => {
+          await collaboration.joinRoom(code, nickname);
         }}
       />
     );

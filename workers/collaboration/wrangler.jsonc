@@ -1,0 +1,23 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "col-collaboration-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-07",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CollaborationRoom",
+        "class_name": "CollaborationRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "collaboration-v1",
+      "new_sqlite_classes": ["CollaborationRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

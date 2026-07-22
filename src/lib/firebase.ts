@@ -113,6 +113,11 @@ export async function getFirebaseContext(
   return { ...services, user };
 }
 
+export async function getFirebaseIdToken(forceRefresh = false): Promise<string> {
+  const { user } = await getFirebaseContext();
+  return user.getIdToken(forceRefresh);
+}
+
 export async function signInWithGoogle(): Promise<GoogleUserProfile> {
   const { auth, authApi } = await getFirebaseServices();
   await auth.authStateReady();

@@ -1,0 +1,74 @@
+name: Deploy collaboration relay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "workers/collaboration/**"
+      - "src/hooks/useCollaborationRelay.ts"
+      - "src/hooks/useCollaborationPython.ts"
+      - "src/lib/collaborationConnectionPolicy.ts"
+      - "src/types/collaboration.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-collaboration-relay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collaboration-relay
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ vars.COLLAB_RELAY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      FIREBASE_DATABASE_URL: ${{ vars.VITE_FIREBASE_DATABASE_URL }}
+      ALLOWED_ORIGINS: ${{ vars.COLLAB_ALLOWED_ORIGINS }}
+    steps:
+      - name: Check deploy configuration
+        id: configuration
+        shell: bash
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" || -z "$FIREBASE_DATABASE_URL" || -z "$ALLOWED_ORIGINS" ]]; then
+            echo "::notice::Skipping collaboration relay deployment because required Cloudflare secrets or relay variables are missing."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        run: npm ci
+
+      - name: Test relay
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        run: npx vitest run --config workers/collaboration/vitest.config.ts
+
+      - name: Typecheck relay
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        run: npx tsc -p workers/collaboration/tsconfig.json
+
+      - name: Validate relay bundle
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        run: npx wrangler deploy --dry-run --config workers/collaboration/wrangler.jsonc --var "FIREBASE_DATABASE_URL:${FIREBASE_DATABASE_URL}" --var "ALLOWED_ORIGINS:${ALLOWED_ORIGINS}"
+
+      - name: Deploy relay
+        if: ${{ steps.configuration.outputs.ready == 'true' }}
+        run: npx wrangler deploy --config workers/collaboration/wrangler.jsonc --keep-vars --var "FIREBASE_DATABASE_URL:${FIREBASE_DATABASE_URL}" --var "ALLOWED_ORIGINS:${ALLOWED_ORIGINS}"

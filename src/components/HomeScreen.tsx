@@ -1,4 +1,16 @@
-import { ArrowRight, Gamepad2, LoaderCircle, LogIn, LogOut, Radio, UserRound, Users, X } from "lucide-react";
+import {
+  ArrowRight,
+  Code2,
+  Gamepad2,
+  LoaderCircle,
+  LogIn,
+  LogOut,
+  Plus,
+  Radio,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { getDefaultTopicSelection, type CurriculumTopicId } from "../data/curriculum";
 import type { ProblemBank } from "../data/problemTypes";
@@ -9,6 +21,8 @@ import { TopicSelector } from "./TopicSelector";
 interface HomeScreenProps {
   bank: ProblemBank;
   configured: boolean;
+  collaborationConfigured: boolean;
+  collaborationError?: string | null;
   authUser: GoogleUserProfile | null;
   authLoading: boolean;
   onSignIn: () => Promise<void>;
@@ -17,11 +31,15 @@ interface HomeScreenProps {
   onSolo: (topics: CurriculumTopicId[]) => void;
   onCreateRoom: (topics: CurriculumTopicId[]) => Promise<void>;
   onJoinRoom: (code: string, nickname: string) => Promise<void>;
+  onCreateCollaborationRoom: () => Promise<void>;
+  onJoinCollaborationRoom: (code: string, nickname: string) => Promise<void>;
 }
 
 export function HomeScreen({
   bank,
   configured,
+  collaborationConfigured,
+  collaborationError,
   authUser,
   authLoading,
   onSignIn,
@@ -30,17 +48,25 @@ export function HomeScreen({
   onSolo,
   onCreateRoom,
   onJoinRoom,
+  onCreateCollaborationRoom,
+  onJoinCollaborationRoom,
 }: HomeScreenProps) {
   const [code, setCode] = useState("");
+  const [collaborationCode, setCollaborationCode] = useState("");
   const [nickname, setNickname] = useState("");
   const [topics, setTopics] = useState<CurriculumTopicId[]>(() =>
     getDefaultTopicSelection(bank),
   );
-  const [busy, setBusy] = useState<"auth" | "create" | "join" | null>(null);
+  const [busy, setBusy] = useState<
+    "auth" | "create" | "join" | "create-collaboration" | "join-collaboration" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [showUnlimitedSignIn, setShowUnlimitedSignIn] = useState(false);
 
-  const perform = async (kind: "create" | "join", action: () => Promise<void>) => {
+  const perform = async (
+    kind: "create" | "join" | "create-collaboration" | "join-collaboration",
+    action: () => Promise<void>,
+  ) => {
     setBusy(kind);
     setError(null);
     try {
@@ -122,7 +148,7 @@ export function HomeScreen({
           />
           <h1 className="text-4xl font-black tracking-tight text-white sm:text-5xl">Col</h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-400 sm:text-base">
-            Race your classmates through Python challenges that adapt as each student grows.
+            Practice, compete, or build Python together in a shared notebook.
           </p>
         </div>
 
@@ -196,6 +222,77 @@ export function HomeScreen({
               <Gamepad2 size={17} /> Solo practice
             </button>
           </section>
+
+          <section className="panel p-6 md:col-span-2">
+            <div className="grid gap-6 lg:grid-cols-[1fr_1.25fr] lg:items-end">
+              <div>
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="grid size-10 place-items-center rounded-xl bg-cyan-400/10 text-cyan-300">
+                    <Code2 size={21} />
+                  </div>
+                  <div>
+                    <h2 className="font-black text-white">Collaborative notebook</h2>
+                    <p className="text-xs text-slate-500">
+                      Edit and run Python cells together—no problems or timer.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-sm leading-6 text-slate-400">
+                  A Google-signed-in user creates the room. Classmates join with its code and a
+                  nickname. The notebook lasts while someone remains connected.
+                </p>
+                <button
+                  type="button"
+                  disabled={!collaborationConfigured || authLoading || busy !== null}
+                  onClick={() => perform("create-collaboration", onCreateCollaborationRoom)}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-black text-cyan-100 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+                >
+                  {busy === "create-collaboration" ? (
+                    <LoaderCircle size={17} className="animate-spin" />
+                  ) : (
+                    <Plus size={17} />
+                  )}
+                  Create collaborative room
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                <input
+                  value={collaborationCode}
+                  onChange={(event) =>
+                    setCollaborationCode(event.target.value.toUpperCase().slice(0, 6))
+                  }
+                  placeholder="ROOM CODE"
+                  aria-label="Collaboration room code"
+                  className="rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-3 font-mono text-lg font-black tracking-[0.3em] text-white placeholder:text-sm placeholder:tracking-widest placeholder:text-slate-700"
+                />
+                <input
+                  value={nickname}
+                  onChange={(event) => setNickname(event.target.value.slice(0, 20))}
+                  placeholder="Your nickname"
+                  aria-label="Collaboration nickname"
+                  className="rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-white placeholder:text-slate-700"
+                />
+                <button
+                  type="button"
+                  disabled={!collaborationConfigured || busy !== null}
+                  onClick={() =>
+                    perform("join-collaboration", () =>
+                      onJoinCollaborationRoom(collaborationCode, nickname),
+                    )
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busy === "join-collaboration" ? (
+                    <LoaderCircle size={17} className="animate-spin" />
+                  ) : (
+                    <ArrowRight size={17} />
+                  )}
+                  Join
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
 
         {!configured && (
@@ -204,9 +301,15 @@ export function HomeScreen({
             Solo Practice works now.
           </div>
         )}
-        {error && (
-          <div className="mt-4 rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-center text-sm font-semibold text-rose-200">
-            {error}
+        {configured && !collaborationConfigured && (
+          <div className="mt-4 rounded-xl border border-cyan-300/20 bg-cyan-300/5 px-4 py-3 text-center text-xs leading-5 text-cyan-100/70">
+            Collaborative notebooks are disabled until <code>VITE_COLLAB_RELAY_HOST</code> is
+            configured. Race and solo modes still work.
+          </div>
+        )}
+        {(error || collaborationError) && (
+          <div role="alert" className="mt-4 rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-center text-sm font-semibold text-rose-200">
+            {error ?? collaborationError}
           </div>
         )}
       </div>

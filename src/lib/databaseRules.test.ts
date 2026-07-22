@@ -83,4 +83,115 @@ describe("Realtime Database rule shape", () => {
     const awards = ((progress.challengeAwards as RuleNode).$challengeId ?? {}) as RuleNode;
     expect(String(awards[".validate"])).toContain("-2000");
   });
+
+  it("requires Google authentication and a creator membership to create collaboration rooms", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const roomWrite = String(room[".write"]);
+    expect(roomWrite).toContain("google.com");
+    expect(roomWrite).toContain("meta/creatorUid");
+    expect(roomWrite).toContain("newData.child('members').child(auth.uid)");
+    expect(roomWrite).toContain("newData.child('memberSlots').child('0')");
+    expect(roomWrite).toContain("meta/leaseExpiresAt");
+    expect(roomWrite).toContain("<= now");
+  });
+
+  it("keeps collaboration metadata identity immutable while members renew a bounded lease", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const meta = room.meta as RuleNode;
+    const validation = String(meta[".validate"]);
+    expect(String(meta[".write"])).toContain("child('members').child(auth.uid)");
+    expect(String(meta[".write"])).toContain("data.child('leaseExpiresAt').val() > now");
+    expect(validation).toContain("roomInstanceId");
+    expect(validation).toContain("schemaVersion').val() === 1");
+    expect(validation).toContain("status').val() === 'open'");
+    expect(validation).toContain("leaseExpiresAt");
+    expect(validation).toContain("now + 120000");
+    expect(validation).toContain("newData.child('creatorUid').val() === data.child('creatorUid').val()");
+    expect(validation).not.toContain("source");
+    expect(validation).not.toContain("output");
+    expect(((meta.$other as RuleNode)[".validate"])).toBe(false);
+    expect((((room.$other as RuleNode)[".validate"]))).toBe(false);
+  });
+
+  it("limits collaboration members to self-owned immutable records in live rooms", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const member = (((room.members as RuleNode).$uid ?? {}) as RuleNode);
+    const memberWrite = String(member[".write"]);
+    const memberValidation = String(member[".validate"]);
+    expect(memberWrite).toContain("$uid === auth.uid");
+    expect(memberWrite).toContain("meta/status");
+    expect(memberWrite).toContain("meta/leaseExpiresAt");
+    expect(memberWrite).toContain("!newData.exists()");
+    expect(memberWrite).toContain("newData.parent().parent().child('memberSlots')");
+    expect(memberValidation).toContain("$uid === auth.uid");
+    expect(memberValidation).toContain("nickname");
+    expect(memberValidation).toContain("joinedAt");
+    expect(memberValidation).toContain("meta/leaseExpiresAt");
+    expect(memberValidation).toContain("google.com");
+    expect(memberValidation).toContain("meta/creatorUid");
+    expect(((member.$other as RuleNode)[".validate"])).toBe(false);
+  });
+
+  it("does not grant Google users a cascading room read", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    expect(room[".read"]).toBeUndefined();
+    expect(String((room.meta as RuleNode)[".read"])).toContain("auth != null");
+    expect(String((room.members as RuleNode)[".read"])).toContain("data.child(auth.uid)");
+  });
+
+  it("avoids unsupported child-count APIs", () => {
+    expect(JSON.stringify(rules.collaborationRooms)).not.toContain("numChildren");
+  });
+
+  it("caps Firebase authorization records with thirty self-owned slots", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const slots = room.memberSlots as RuleNode;
+    const slot = slots.$slot as RuleNode;
+    const writeRule = String(slot[".write"]);
+    const validation = String(slot[".validate"]);
+    expect(writeRule).toContain("$slot === '0'");
+    expect(writeRule).toContain("$slot === '29'");
+    expect(writeRule).not.toContain("$slot === '30'");
+    expect(writeRule).toContain("newData.val() === auth.uid");
+    expect(writeRule).toContain("!newData.exists()");
+    expect(writeRule).toContain("child('members').child(auth.uid)");
+    expect(writeRule).toContain("child('slot').val() === $slot");
+    expect(validation).toContain("newData.isString()");
+    expect(validation).toContain("child('members').child(auth.uid)");
+  });
+
+  it("requires existing members and slots to be removed atomically", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const memberWrite = String((((room.members as RuleNode).$uid as RuleNode)[".write"]));
+    const slotWrite = String((((room.memberSlots as RuleNode).$slot as RuleNode)[".write"]));
+
+    // Explicit Leave is idempotent when a member or slot was already cleaned
+    // up by another same-user browser context.
+    expect(memberWrite).toContain("!newData.exists() && (!data.exists() ||");
+    expect(slotWrite).toContain("!newData.exists() && (!data.exists() ||");
+
+    // Once either half exists, both halves must disappear in the same write.
+    expect(memberWrite).toContain(
+      "data.parent().parent().child('memberSlots').child(data.child('slot').val()).val() === auth.uid",
+    );
+    expect(memberWrite).toContain(
+      "!newData.parent().parent().child('memberSlots').child(data.child('slot').val()).exists()",
+    );
+    expect(slotWrite).toContain(
+      "data.parent().parent().child('members').child(auth.uid).child('slot').val() === $slot",
+    );
+    expect(slotWrite).toContain(
+      "!newData.parent().parent().child('members').child(auth.uid).exists()",
+    );
+  });
+
+  it("allows root deletion only when all occupied slots belong to the caller", () => {
+    const room = ((rules.collaborationRooms as RuleNode).$code ?? {}) as RuleNode;
+    const writeRule = String(room[".write"]);
+    expect(writeRule).toContain("data.exists() && !newData.exists()");
+    expect(writeRule).toContain("data.child('members').child(auth.uid)");
+    expect(writeRule).toContain("memberSlots').child('0').exists()");
+    expect(writeRule).toContain("memberSlots').child('29').exists()");
+    expect(writeRule).not.toContain("memberSlots').child('30')");
+  });
 });

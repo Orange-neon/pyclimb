@@ -7,16 +7,23 @@
     "node": ">=22.12"
   },
   "overrides": {
-    "dompurify": "^3.4.11"
+    "dompurify": "^3.4.12"
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run validate:problems && tsc -b && vite build",
+    "build": "npm run validate:problems && npm run typecheck && vite build",
     "bank:new": "tsx scripts/create-bank-version.ts",
-    "check": "npm run test && npm run verify:solutions && npm run build",
+    "check": "npm run test && npm run collaboration:test && npm run firebase:test:rules && npm run verify:solutions && npm run build && npm run collaboration:dry-run",
+    "collaboration:deploy": "wrangler deploy --config workers/collaboration/wrangler.jsonc",
+    "collaboration:dev": "wrangler dev --config workers/collaboration/wrangler.jsonc",
+    "collaboration:dry-run": "wrangler deploy --dry-run --config workers/collaboration/wrangler.jsonc",
+    "collaboration:secret": "node --input-type=module -e \"import { randomBytes } from 'node:crypto'; console.log(randomBytes(32).toString('base64url'))\"",
+    "collaboration:test": "vitest run --config workers/collaboration/vitest.config.ts",
+    "collaboration:typecheck": "tsc -p workers/collaboration/tsconfig.json --pretty false",
+    "firebase:test:rules": "firebase emulators:exec --only database --project demo-col-collaboration \"vitest run --config firebase.rules.vitest.config.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --pretty false",
+    "typecheck": "tsc -b --pretty false && npm run collaboration:typecheck",
     "validate:problems": "tsx scripts/validate-problems.ts",
     "verify:solutions": "tsx scripts/verify-solutions.ts",
     "preview": "vite preview"
@@ -27,20 +34,28 @@
     "firebase": "^12.6.0",
     "framer-motion": "^12.23.24",
     "lucide-react": "^0.552.0",
+    "partyserver": "0.5.8",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "y-monaco": "0.1.6",
+    "y-partyserver": "2.2.0",
+    "yjs": "13.6.30"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20260617.1",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@tailwindcss/vite": "^4.1.17",
     "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.1.1",
+    "firebase-tools": "^15.24.0",
     "pyodide": "0.25.0",
     "tailwindcss": "^4.1.17",
     "tsx": "^4.20.6",
     "typescript": "~5.9.3",
     "vite": "^7.2.2",
-    "vitest": "^4.0.14"
+    "vitest": "^4.0.14",
+    "wrangler": "4.102.0"
   }
 }
