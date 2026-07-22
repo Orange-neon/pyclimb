@@ -38,6 +38,14 @@ function safeText(value) {
   catch { return "Unknown Python error"; }
 }
 
+function createInputReader(input) {
+  const normalized = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  if (normalized.endsWith("\n")) lines.pop();
+  let index = 0;
+  return () => (index < lines.length ? lines[index++] : undefined);
+}
+
 async function execute(message) {
   const runtime = await getRuntime();
   const stdoutChunks = [];
@@ -61,7 +69,7 @@ async function execute(message) {
     return value + decoder.decode();
   };
 
-  runtime.setStdin({ stdin: () => undefined, isatty: false });
+  runtime.setStdin({ stdin: createInputReader(message.stdin), isatty: false });
   runtime.setStdout({ write: (buffer) => append(stdoutChunks, buffer), isatty: false });
   runtime.setStderr({ write: (buffer) => append(stderrChunks, buffer), isatty: false });
 
@@ -99,7 +107,12 @@ self.addEventListener("message", async (event) => {
     }
     return;
   }
-  if (message.type !== "run" || typeof message.requestId !== "string" || typeof message.code !== "string") return;
+  if (
+    message.type !== "run" ||
+    typeof message.requestId !== "string" ||
+    typeof message.code !== "string" ||
+    typeof message.stdin !== "string"
+  ) return;
   const result = await execute(message);
   self.postMessage({ type: "result", requestId: message.requestId, ...result });
 });
@@ -159,8 +172,17 @@ export function createCollaborationSandboxSrcdoc(channel: string): string {
     if (event.source !== parent) return;
     const message = event.data;
     if (!message || message.channel !== channel || message.type !== "run") return;
-    if (typeof message.requestId !== "string" || typeof message.code !== "string") return;
-    worker?.postMessage({ type: "run", requestId: message.requestId, code: message.code });
+    if (
+      typeof message.requestId !== "string" ||
+      typeof message.code !== "string" ||
+      typeof message.stdin !== "string"
+    ) return;
+    worker?.postMessage({
+      type: "run",
+      requestId: message.requestId,
+      code: message.code,
+      stdin: message.stdin,
+    });
   });
 
   startWorker();
@@ -198,6 +220,7 @@ export class OpaquePythonSandbox {
 
   execute = (
     code: string,
+    stdin = "",
     timeoutMs = COLLABORATION_EXECUTION_TIMEOUT_MS,
   ): Promise<CollaborationPythonResult> => {
     if (this.statusValue !== "ready" || !this.iframe?.contentWindow) {
@@ -236,7 +259,7 @@ export class OpaquePythonSandbox {
 
       this.pending.set(requestId, { resolve, timeoutId, startedAt });
       this.iframe?.contentWindow?.postMessage(
-        { type: "run", requestId, code, channel: this.channel },
+        { type: "run", requestId, code, stdin, channel: this.channel },
         "*",
       );
     });

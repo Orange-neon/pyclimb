@@ -55,6 +55,7 @@ function CollaborationNotebookRoom({
   const [copied, setCopied] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [cellInputs, setCellInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const update = () => setDocumentRevision((current) => current + 1);
@@ -102,7 +103,11 @@ function CollaborationNotebookRoom({
         // Use a local duration rather than comparing client and relay clocks.
         // The small margin leaves time for the result frame to reach the relay.
         const remaining = Math.max(100, Math.min(4_850, accepted.timeoutMs - 150));
-        const result = await python.execute(accepted.source, remaining);
+        const result = await python.execute(
+          accepted.source,
+          cellInputs[cellId] ?? "",
+          remaining,
+        );
         const bounded = truncateExecutionOutput(result);
         relay.sendRunResult({
           type: "run-result",
@@ -120,7 +125,7 @@ function CollaborationNotebookRoom({
         setBusyCellId(null);
       }
     },
-    [busyCellId, python, relay],
+    [busyCellId, cellInputs, python, relay],
   );
 
   const leave = async () => {
@@ -288,6 +293,7 @@ function CollaborationNotebookRoom({
                 roomInstanceId={session.roomInstanceId}
                 awareness={relay.awareness!}
                 running={busyCellId === cell.id || cell.execution?.status === "running"}
+                stdin={cellInputs[cell.id] ?? ""}
                 runDisabled={
                   !canRun ||
                   cell.execution?.status === "running" ||
@@ -298,6 +304,9 @@ function CollaborationNotebookRoom({
                 addBelowDisabled={snapshot.cells.length >= MAX_NOTEBOOK_CELLS}
                 onlyCell={snapshot.cells.length === 1}
                 onFocus={() => relay.setActiveCell(cell.id)}
+                onStdinChange={(value) =>
+                  setCellInputs((current) => ({ ...current, [cell.id]: value }))
+                }
                 onRun={() => void runCell(cell.id)}
                 onMove={(direction) => moveNotebookCell(relay.document, cell.id, direction)}
                 onAddBelow={() => addNotebookCell(relay.document, cell.id)}

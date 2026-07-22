@@ -24,9 +24,9 @@ export function useCollaborationPython() {
   }, []);
 
   const execute = useCallback(
-    (code: string, timeoutMs?: number): Promise<CollaborationPythonResult> =>
+    (code: string, stdin = "", timeoutMs?: number): Promise<CollaborationPythonResult> =>
       sandbox
-        ? sandbox.execute(code, timeoutMs)
+        ? sandbox.execute(code, stdin, timeoutMs)
         : Promise.resolve({
             stdout: "",
             stderr: "Python is still warming up.",

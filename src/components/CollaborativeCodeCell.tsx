@@ -24,12 +24,14 @@ interface CollaborativeCodeCellProps {
   roomInstanceId: string;
   awareness: CollaborationAwareness;
   running: boolean;
+  stdin: string;
   runDisabled: boolean;
   moveUpDisabled: boolean;
   moveDownDisabled: boolean;
   addBelowDisabled: boolean;
   onlyCell: boolean;
   onFocus: () => void;
+  onStdinChange: (value: string) => void;
   onRun: () => void;
   onMove: (direction: -1 | 1) => void;
   onAddBelow: () => void;
@@ -48,12 +50,14 @@ export function CollaborativeCodeCell({
   roomInstanceId,
   awareness,
   running,
+  stdin,
   runDisabled,
   moveUpDisabled,
   moveDownDisabled,
   addBelowDisabled,
   onlyCell,
   onFocus,
+  onStdinChange,
   onRun,
   onMove,
   onAddBelow,
@@ -188,32 +192,55 @@ export function CollaborativeCodeCell({
         </div>
       </header>
 
-      <div className="h-56 bg-[#0b1020]">
-        <Editor
-          height="100%"
-          path={`collaboration://${roomInstanceId}/${cell.id}.py`}
-          defaultLanguage="python"
-          defaultValue=""
-          theme="vs-dark"
-          onMount={mountEditor}
-          keepCurrentModel={false}
-          loading={<div className="p-5 text-sm text-slate-500">Loading editor…</div>}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            lineHeight: 22,
-            tabSize: 4,
-            insertSpaces: true,
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            padding: { top: 12, bottom: 12 },
-            renderLineHighlight: "gutter",
-            smoothScrolling: true,
-            fontLigatures: true,
-            wordWrap: "on",
-            ariaLabel: `Python cell ${index + 1} editor`,
-          }}
-        />
+      <div className="grid bg-[#0b1020] lg:grid-cols-[minmax(0,1fr)_19rem]">
+        <div className="h-56 min-w-0">
+          <Editor
+            height="100%"
+            path={`collaboration://${roomInstanceId}/${cell.id}.py`}
+            defaultLanguage="python"
+            defaultValue=""
+            theme="vs-dark"
+            onMount={mountEditor}
+            keepCurrentModel={false}
+            loading={<div className="p-5 text-sm text-slate-500">Loading editor…</div>}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              lineHeight: 22,
+              tabSize: 4,
+              insertSpaces: true,
+              automaticLayout: true,
+              scrollBeyondLastLine: false,
+              padding: { top: 12, bottom: 12 },
+              renderLineHighlight: "gutter",
+              smoothScrolling: true,
+              fontLigatures: true,
+              wordWrap: "on",
+              ariaLabel: `Python cell ${index + 1} editor`,
+            }}
+          />
+        </div>
+        <section className="flex h-56 min-w-0 flex-col border-t border-slate-800 bg-[#080d1a] lg:border-l lg:border-t-0">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+            <label
+              htmlFor={`collaboration-stdin-${cell.id}`}
+              className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
+            >
+              Standard input
+            </label>
+            <span className="text-[9px] text-slate-600">local · one line per input()</span>
+          </div>
+          <textarea
+            id={`collaboration-stdin-${cell.id}`}
+            value={stdin}
+            onFocus={onFocus}
+            onChange={(event) => onStdinChange(event.target.value)}
+            placeholder={"Alice\n42"}
+            aria-label={`Standard input for Python cell ${index + 1}`}
+            spellCheck={false}
+            className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-sm leading-5 text-slate-200 outline-none placeholder:text-slate-700 focus:bg-sky-400/[0.025]"
+          />
+        </section>
       </div>
 
       {execution && (

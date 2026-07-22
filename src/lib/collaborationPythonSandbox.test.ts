@@ -18,6 +18,9 @@ describe("opaque collaboration Python sandbox", () => {
     expect(srcdoc).toContain('message.channel !== channel');
     expect(srcdoc).toContain("runtime.toPy");
     expect(srcdoc).toContain("globals.destroy");
+    expect(srcdoc).toContain("createInputReader");
+    expect(srcdoc).toContain("runtime.setStdin");
+    expect(srcdoc).toContain('typeof message.stdin !== "string"');
     expect(srcdoc).toContain("connect-src https://cdn.jsdelivr.net");
     expect(srcdoc).toContain("'wasm-unsafe-eval'");
     expect(srcdoc).toContain("importScripts");
