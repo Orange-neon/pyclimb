@@ -8,12 +8,15 @@ import {
   Terminal,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { MonacoBinding } from "y-monaco";
 import type { CollaborationAwareness } from "../hooks/useCollaborationRelay";
 import {
   MAX_CELL_SOURCE_BYTES,
+  MAX_CELL_STDIN_BYTES,
   notebookSourceByteLength,
+  replaceNotebookCellInput,
+  trimNotebookCellInput,
   trimNotebookCellSource,
   type NotebookCell,
 } from "../lib/collaborationNotebook";
@@ -24,14 +27,13 @@ interface CollaborativeCodeCellProps {
   roomInstanceId: string;
   awareness: CollaborationAwareness;
   running: boolean;
-  stdin: string;
   runDisabled: boolean;
+  editingDisabled: boolean;
   moveUpDisabled: boolean;
   moveDownDisabled: boolean;
   addBelowDisabled: boolean;
   onlyCell: boolean;
   onFocus: () => void;
-  onStdinChange: (value: string) => void;
   onRun: () => void;
   onMove: (direction: -1 | 1) => void;
   onAddBelow: () => void;
@@ -44,20 +46,111 @@ function executionTone(status: string): string {
   return "text-rose-300";
 }
 
+function useNotebookTextBytes(source: NotebookCell["source"]): number {
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      source.observe(onStoreChange);
+      return () => source.unobserve(onStoreChange);
+    },
+    [source],
+  );
+  const getSnapshot = useCallback(() => notebookSourceByteLength(source), [source]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+function SourceSize({ source }: { source: NotebookCell["source"] }) {
+  const sourceBytes = useNotebookTextBytes(source);
+
+  return (
+    <span
+      className={sourceBytes > MAX_CELL_SOURCE_BYTES ? "text-rose-300" : "text-slate-600"}
+      title={`${sourceBytes.toLocaleString()} UTF-8 bytes`}
+    >
+      {Math.ceil(sourceBytes / 1024)} KiB / 50 KiB
+    </span>
+  );
+}
+
+function RunButton({
+  cell,
+  index,
+  running,
+  disabled,
+  onRun,
+}: {
+  cell: NotebookCell;
+  index: number;
+  running: boolean;
+  disabled: boolean;
+  onRun: () => void;
+}) {
+  const sourceBytes = useNotebookTextBytes(cell.source);
+
+  return (
+    <button
+      type="button"
+      disabled={disabled || sourceBytes > MAX_CELL_SOURCE_BYTES}
+      onClick={onRun}
+      className="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-400 px-3 text-xs font-black text-emerald-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-35"
+      aria-label={`Run cell ${index + 1}`}
+    >
+      {running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+      {running ? "Running" : "Run"}
+    </button>
+  );
+}
+
+function SharedStdin({
+  stdin,
+  cell,
+  index,
+  onFocus,
+  disabled,
+}: {
+  stdin: NonNullable<NotebookCell["stdin"]>;
+  cell: NotebookCell;
+  index: number;
+  onFocus: () => void;
+  disabled: boolean;
+}) {
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      stdin.observe(onStoreChange);
+      return () => stdin.unobserve(onStoreChange);
+    },
+    [stdin],
+  );
+  const getSnapshot = useCallback(() => stdin.toString(), [stdin]);
+  const value = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  return (
+    <textarea
+      id={`collaboration-stdin-${cell.id}`}
+      value={value}
+      disabled={disabled}
+      onFocus={onFocus}
+      onChange={(event) => replaceNotebookCellInput(stdin, event.target.value)}
+      placeholder={"Alice\n42"}
+      aria-label={`Standard input for Python cell ${index + 1}`}
+      spellCheck={false}
+      className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-sm leading-5 text-slate-200 outline-none placeholder:text-slate-700 focus:bg-sky-400/[0.025] disabled:cursor-wait disabled:text-slate-500"
+    />
+  );
+}
+
 export function CollaborativeCodeCell({
   cell,
   index,
   roomInstanceId,
   awareness,
   running,
-  stdin,
   runDisabled,
+  editingDisabled,
   moveUpDisabled,
   moveDownDisabled,
   addBelowDisabled,
   onlyCell,
   onFocus,
-  onStdinChange,
   onRun,
   onMove,
   onAddBelow,
@@ -66,7 +159,6 @@ export function CollaborativeCodeCell({
   const bindingRef = useRef<MonacoBinding | null>(null);
   const onFocusRef = useRef(onFocus);
   const [editor, setEditor] = useState<Parameters<OnMount>[0] | null>(null);
-  const sourceBytes = notebookSourceByteLength(cell.source);
   onFocusRef.current = onFocus;
 
   const mountEditor = useCallback<OnMount>(
@@ -108,6 +200,23 @@ export function CollaborativeCodeCell({
     return () => cell.source.unobserve(enforceSourceLimit);
   }, [cell.source]);
 
+  useEffect(() => {
+    const stdin = cell.stdin;
+    if (!stdin) return;
+    let scheduled = false;
+    const enforceInputLimit = () => {
+      if (notebookSourceByteLength(stdin) <= MAX_CELL_STDIN_BYTES || scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        trimNotebookCellInput(stdin);
+      });
+    };
+    stdin.observe(enforceInputLimit);
+    enforceInputLimit();
+    return () => stdin.unobserve(enforceInputLimit);
+  }, [cell.stdin]);
+
   const execution = cell.execution;
   const output = execution
     ? [
@@ -136,17 +245,12 @@ export function CollaborativeCodeCell({
             {index + 1}
           </span>
           <span>Python</span>
-          <span
-            className={sourceBytes > MAX_CELL_SOURCE_BYTES ? "text-rose-300" : "text-slate-600"}
-            title={`${sourceBytes.toLocaleString()} UTF-8 bytes`}
-          >
-            {Math.ceil(sourceBytes / 1024)} KiB / 50 KiB
-          </span>
+          <SourceSize source={cell.source} />
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            disabled={moveUpDisabled}
+            disabled={editingDisabled || moveUpDisabled}
             onClick={() => onMove(-1)}
             className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
             aria-label={`Move cell ${index + 1} up`}
@@ -155,7 +259,7 @@ export function CollaborativeCodeCell({
           </button>
           <button
             type="button"
-            disabled={moveDownDisabled}
+            disabled={editingDisabled || moveDownDisabled}
             onClick={() => onMove(1)}
             className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
             aria-label={`Move cell ${index + 1} down`}
@@ -164,31 +268,29 @@ export function CollaborativeCodeCell({
           </button>
           <button
             type="button"
+            disabled={editingDisabled}
             onClick={onDelete}
-            className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-rose-400/10 hover:text-rose-300"
+            className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-rose-400/10 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-25"
             aria-label={`${onlyCell ? "Clear" : "Delete"} cell ${index + 1}`}
           >
             <Trash2 size={15} />
           </button>
           <button
             type="button"
-            disabled={addBelowDisabled}
+            disabled={editingDisabled || addBelowDisabled}
             onClick={onAddBelow}
             className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-sky-400/10 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-25"
             aria-label={`Add a cell below cell ${index + 1}`}
           >
             <Plus size={15} />
           </button>
-          <button
-            type="button"
+          <RunButton
+            cell={cell}
+            index={index}
+            running={running}
             disabled={runDisabled}
-            onClick={onRun}
-            className="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-400 px-3 text-xs font-black text-emerald-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-35"
-            aria-label={`Run cell ${index + 1}`}
-          >
-            {running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-            {running ? "Running" : "Run"}
-          </button>
+            onRun={onRun}
+          />
         </div>
       </header>
 
@@ -216,6 +318,7 @@ export function CollaborativeCodeCell({
               smoothScrolling: true,
               fontLigatures: true,
               wordWrap: "on",
+              readOnly: editingDisabled,
               ariaLabel: `Python cell ${index + 1} editor`,
             }}
           />
@@ -228,18 +331,27 @@ export function CollaborativeCodeCell({
             >
               Standard input
             </label>
-            <span className="text-[9px] text-slate-600">local · one line per input()</span>
+            <span className="text-[9px] text-slate-600">shared · one line per input() · 8 KiB max</span>
           </div>
-          <textarea
-            id={`collaboration-stdin-${cell.id}`}
-            value={stdin}
-            onFocus={onFocus}
-            onChange={(event) => onStdinChange(event.target.value)}
-            placeholder={"Alice\n42"}
-            aria-label={`Standard input for Python cell ${index + 1}`}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-sm leading-5 text-slate-200 outline-none placeholder:text-slate-700 focus:bg-sky-400/[0.025]"
-          />
+          {cell.stdin ? (
+            <SharedStdin
+              stdin={cell.stdin}
+              cell={cell}
+              index={index}
+              onFocus={onFocus}
+              disabled={editingDisabled}
+            />
+          ) : (
+            <textarea
+              id={`collaboration-stdin-${cell.id}`}
+              value=""
+              disabled
+              readOnly
+              placeholder="Preparing shared input…"
+              aria-label={`Standard input for Python cell ${index + 1} is syncing`}
+              className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-sm leading-5 text-slate-500 outline-none placeholder:text-slate-600 disabled:cursor-wait"
+            />
+          )}
         </section>
       </div>
 

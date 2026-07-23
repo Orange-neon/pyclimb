@@ -55,7 +55,7 @@ For automatic relay deploys, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_
 
 The relay validates each Firebase ID token against the exact room-member path before issuing a 60-second WebSocket ticket. Do not place Firebase service-account credentials in the Worker.
 
-Free-tier capacity is intentionally bounded: 30 live participants per room, 50 cells, 50 KiB source per cell, 20 KiB shared output, a five-second execution timeout, and a 500 ms run cooldown per user. Quota exhaustion is reported as temporary collaboration unavailability; it never opts the project into paid usage automatically.
+Free-tier capacity is intentionally bounded: 30 live participants per room, 50 cells, 50 KiB source and 8 KiB shared standard input per cell, 20 KiB shared output, a five-second execution timeout, and a one-second run cooldown per user. Quota exhaustion is reported as temporary collaboration unavailability; it never opts the project into paid usage automatically.
 
 ## Deploy to GitHub Pages
 

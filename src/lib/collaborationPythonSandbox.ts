@@ -1,4 +1,5 @@
 import { truncateExecutionOutput } from "./collaborationNotebook";
+import { formatPythonError } from "./pythonError";
 
 export const COLLABORATION_EXECUTION_TIMEOUT_MS = 5_000;
 export const COLLABORATION_IFRAME_SANDBOX = "allow-scripts";
@@ -17,6 +18,17 @@ interface PendingExecution {
   resolve: (result: CollaborationPythonResult) => void;
   timeoutId: number;
   startedAt: number;
+}
+
+export function formatCollaborationExecutionError(
+  capturedStderr: string,
+  rawError: string,
+): Pick<CollaborationPythonResult, "stderr" | "error"> {
+  const error = formatPythonError(rawError);
+  return {
+    stderr: [capturedStderr.trimEnd(), error].filter(Boolean).join("\n"),
+    error,
+  };
 }
 
 const PYODIDE_WORKER_SOURCE = String.raw`
@@ -86,10 +98,7 @@ async function execute(message) {
 
   const stdout = decode(stdoutChunks);
   const capturedStderr = decode(stderrChunks);
-  const stderr = error
-    ? [capturedStderr.trimEnd(), error].filter(Boolean).join("\n")
-    : capturedStderr;
-  return { stdout, stderr, error, durationMs: performance.now() - startedAt };
+  return { stdout, stderr: capturedStderr, error, durationMs: performance.now() - startedAt };
 }
 
 self.addEventListener("message", async (event) => {
@@ -343,10 +352,14 @@ export class OpaquePythonSandbox {
 
     this.pending.delete(message.requestId);
     window.clearTimeout(pending.timeoutId);
+    const stderr = typeof message.stderr === "string" ? message.stderr : "";
+    const formatted =
+      typeof message.error === "string"
+        ? formatCollaborationExecutionError(stderr, message.error)
+        : { stderr, error: undefined };
     const bounded = truncateExecutionOutput({
       stdout: typeof message.stdout === "string" ? message.stdout : "",
-      stderr: typeof message.stderr === "string" ? message.stderr : "",
-      error: typeof message.error === "string" ? message.error : undefined,
+      ...formatted,
     });
     pending.resolve({
       ...bounded,

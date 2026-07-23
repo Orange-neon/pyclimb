@@ -19,12 +19,12 @@ function input(overrides: Partial<RunPolicyInput> = {}): RunPolicyInput {
 }
 
 describe("run admission policy", () => {
-  it("enforces the cooldown through 499 ms and accepts at 500 ms", () => {
-    expect(evaluateRunRequest(input({ lastRunAt: 9_501 }))).toMatchObject({
+  it("enforces the cooldown through 999 ms and accepts at 1,000 ms", () => {
+    expect(evaluateRunRequest(input({ lastRunAt: 9_001 }))).toMatchObject({
       code: "cooldown",
       retryAfterMs: 1,
     });
-    expect(evaluateRunRequest(input({ lastRunAt: 9_500 }))).toBeNull();
+    expect(evaluateRunRequest(input({ lastRunAt: 9_000 }))).toBeNull();
   });
 
   it("rejects concurrent runs by the same UID or on the same cell", () => {

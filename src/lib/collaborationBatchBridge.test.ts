@@ -1,10 +1,33 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
-import { createBatchedDocumentBridge } from "./collaborationBatchBridge";
+import {
+  COLLABORATION_EDIT_BATCH_MS,
+  createBatchedDocumentBridge,
+} from "./collaborationBatchBridge";
 
 afterEach(() => vi.useRealTimers());
 
 describe("batched collaboration document bridge", () => {
+  it("uses a 50 ms default latency while batching rapid local edits", () => {
+    expect(COLLABORATION_EDIT_BATCH_MS).toBe(50);
+    vi.useFakeTimers();
+    const editor = new Y.Doc();
+    const transport = new Y.Doc();
+    const bridge = createBatchedDocumentBridge(editor, transport);
+    const transportUpdates: Uint8Array[] = [];
+    transport.on("update", (update) => transportUpdates.push(update));
+
+    editor.getText("source").insert(0, "a");
+    editor.getText("source").insert(1, "b");
+
+    vi.advanceTimersByTime(COLLABORATION_EDIT_BATCH_MS - 1);
+    expect(transportUpdates).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(transport.getText("source").toString()).toBe("ab");
+    expect(transportUpdates).toHaveLength(1);
+    expect(bridge.pendingUpdateCount).toBe(0);
+  });
+
   it("merges local edits into one delayed transport update", () => {
     vi.useFakeTimers();
     const editor = new Y.Doc();

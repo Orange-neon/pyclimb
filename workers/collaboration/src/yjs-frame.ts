@@ -58,10 +58,16 @@ export function isValidYjsUpdate(update: Uint8Array): boolean {
 
 /**
  * Measures the canonical state after merging an incoming sync update without
- * mutating the live document. Duplicate full-state frames therefore cost zero
- * additional document state instead of being pessimistically double-counted.
+ * mutating the live document. An optional relay-schema callback includes
+ * authoritative repair overhead in admission checks. Duplicate full-state
+ * frames therefore cost zero additional document state instead of being
+ * pessimistically double-counted.
  */
-export function measureMergedDocumentBytes(document: Y.Doc, frame: Uint8Array): number | null {
+export function measureMergedDocumentBytes(
+  document: Y.Doc,
+  frame: Uint8Array,
+  prepareMergedDocument?: (document: Y.Doc) => void,
+): number | null {
   const incomingUpdate = extractSyncUpdate(frame);
   if (!incomingUpdate) return null;
 
@@ -69,6 +75,7 @@ export function measureMergedDocumentBytes(document: Y.Doc, frame: Uint8Array): 
   try {
     Y.applyUpdate(temporary, Y.encodeStateAsUpdate(document));
     Y.applyUpdate(temporary, incomingUpdate);
+    prepareMergedDocument?.(temporary);
     return Y.encodeStateAsUpdate(temporary).byteLength;
   } catch {
     return null;

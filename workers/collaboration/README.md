@@ -81,8 +81,40 @@ member, accepting control messages on the sync channel does not grant an
 additional room capability; strict channel separation would require a
 two-socket client protocol change.
 
+## Realtime and free-tier budget
+
+Browser edits are merged for 50 ms before they enter the relay, so a continuously
+changing client sends at most 20 document-update frames per second. Remote
+updates still cross from the provider document to Monaco immediately. Seven
+simultaneously active editors therefore have a scheduled edit ceiling of 140
+incoming WebSocket messages per second, plus occasional explicit flushes.
+
+Monaco changes cursor selection on nearly every keystroke. Selection awareness
+is limited to five frames per second per client, and clients do not echo
+awareness that originated at the relay. This avoids the default provider's
+one-echo-per-recipient amplification in a seven-person room.
+
+Cloudflare's Free plan currently includes 100,000 Durable Object requests per
+day and bills incoming WebSocket messages at 20:1. That is two million incoming
+messages per day. At the combined 20 edit plus five selection-frame ceilings,
+seven clients would consume that allowance in about 3 hours 10 minutes of
+uninterrupted maximum activity. Ordinary typing is much lower: seven people
+typing at ten edits per second for four hours account for 50,400 billed document
+requests and at most 25,200 billed selection requests. Even one accepted run
+and result per person per second would keep that example around 85,680 requests,
+leaving room for normal connections and focus updates. Other rooms and Workers
+on the account share the daily quota, so this is a planning envelope rather
+than a guarantee for arbitrary usage. Recheck the current
+[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)
+before changing the batch interval or planning substantially longer sessions.
+
+Run admission is limited to one accepted run per user per second, in addition
+to the existing one-active-run-per-user and one-active-run-per-cell rules.
+
 Yjs sync frames allow a 4 MiB document plus 64 KiB of protocol headroom so a
 late joiner or hibernation wake can transfer the full capped document.
+The frontend caps each cell at 50 KiB of source and 8 KiB of shared standard
+input so the newly shared input field cannot consume the room budget unchecked.
 Awareness frames are capped at 64 KiB and control frames at 256 KiB; normal
 incremental Yjs updates remain beneath the 4 MiB merged-document cap.
 

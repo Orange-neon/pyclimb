@@ -3,7 +3,7 @@ export const ROOM_INSTANCE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[
 
 export const RELAY_LIMITS = {
   ticketLifetimeMs: 60_000,
-  runCooldownMs: 500,
+  runCooldownMs: 1_000,
   runTimeoutMs: 5_000,
   maxParticipants: 30,
   maxConnections: 60,
@@ -16,6 +16,7 @@ export const RELAY_LIMITS = {
   // relay therefore caps binary sync frames at the same size as the document.
   maxSyncFrameBytes: 4 * 1024 * 1024 + 64 * 1024,
   maxDocumentBytes: 4 * 1024 * 1024,
+  schemaRepairEncodingMarginBytes: 1_024,
   rateWindowMs: 10_000,
   maxSyncFramesPerWindow: 300,
   maxAwarenessFramesPerWindow: 900,

@@ -8,9 +8,9 @@ import {
   disconnectedRelayStatus,
   isRetryableRelayTicketStatus,
 } from "../lib/collaborationConnectionPolicy";
+import { optimizeCollaborationAwareness } from "../lib/collaborationAwareness";
 import {
   applyInitialNotebookUpdate,
-  ensureNotebookHasCell,
   normalizeNotebookStructure,
   participantColor,
 } from "../lib/collaborationNotebook";
@@ -134,12 +134,32 @@ function parseParticipant(
   };
 }
 
+function sameParticipants(
+  current: readonly CollaborationParticipant[],
+  next: readonly CollaborationParticipant[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((participant, index) => {
+      const candidate = next[index];
+      return (
+        participant.clientId === candidate.clientId &&
+        participant.uid === candidate.uid &&
+        participant.nickname === candidate.nickname &&
+        participant.color === candidate.color &&
+        participant.activeCellId === candidate.activeCellId &&
+        participant.local === candidate.local
+      );
+    })
+  );
+}
+
 function createDocumentBundle() {
   const editorDocument = new Y.Doc();
   const transportDocument = new Y.Doc();
   applyInitialNotebookUpdate(editorDocument);
   applyInitialNotebookUpdate(transportDocument);
-  const bridge = createBatchedDocumentBridge(editorDocument, transportDocument, 100);
+  const bridge = createBatchedDocumentBridge(editorDocument, transportDocument);
   return { editorDocument, transportDocument, bridge };
 }
 
@@ -151,6 +171,7 @@ export function useCollaborationRelay({
   const [documents] = useState(createDocumentBundle);
   const [provider, setProvider] = useState<YProvider | null>(null);
   const [status, setStatus] = useState<CollaborationRelayStatus>("connecting");
+  const [hasSynchronized, setHasSynchronized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<CollaborationParticipant[]>([]);
   const pendingRuns = useRef(new Map<string, PendingRunRequest>());
@@ -238,6 +259,7 @@ export function useCollaborationRelay({
         }
       },
     });
+    const restoreAwareness = optimizeCollaborationAwareness(nextProvider);
     providerRef.current = nextProvider;
     setProvider(nextProvider);
 
@@ -297,14 +319,20 @@ export function useCollaborationRelay({
         const current = byUid.get(participant.uid);
         if (!current || participant.local) byUid.set(participant.uid, participant);
       }
-      setParticipants(
-        Array.from(byUid.values()).sort((left, right) =>
+      const nextParticipants = Array.from(byUid.values()).sort(
+        (left, right) =>
           left.local === right.local
             ? left.nickname.localeCompare(right.nickname)
             : left.local
               ? -1
               : 1,
-        ),
+      );
+      // Cursor selection is also carried through awareness and changes on
+      // nearly every keystroke. Monaco consumes it directly; avoid rebuilding
+      // the full notebook when the participant fields rendered here did not
+      // actually change.
+      setParticipants((current) =>
+        sameParticipants(current, nextParticipants) ? current : nextParticipants,
       );
     };
 
@@ -332,6 +360,7 @@ export function useCollaborationRelay({
       else if (!navigator.onLine) setStatus("offline");
       else if (synced && readyForControl) {
         wasSynchronized = true;
+        setHasSynchronized(true);
         setStatus("connected");
       } else if (nextProvider.wsconnected) setStatus("syncing");
       else setStatus(disconnectedRelayStatus(true, false, wasSynchronized));
@@ -348,6 +377,7 @@ export function useCollaborationRelay({
         readyForControl = true;
         if (nextProvider.synced && navigator.onLine) {
           wasSynchronized = true;
+          setHasSynchronized(true);
           setStatus("connected");
         }
         return;
@@ -451,6 +481,7 @@ export function useCollaborationRelay({
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("pagehide", flush);
       nextProvider.awareness.off("change", updateParticipants);
+      restoreAwareness();
       nextProvider.destroy();
       if (providerRef.current === nextProvider) providerRef.current = null;
       for (const pending of pendingRuns.current.values()) {
@@ -468,14 +499,24 @@ export function useCollaborationRelay({
       repairing = true;
       try {
         normalizeNotebookStructure(documents.editorDocument);
-        ensureNotebookHasCell(documents.editorDocument);
       } finally {
         repairing = false;
       }
     };
-    documents.editorDocument.on("update", repair);
+    const repairAfterStructuralChange = (transaction: Y.Transaction) => {
+      // MonacoBinding owns Y.Text synchronization. Text-only transactions
+      // cannot add, remove, or reorder cells, so rescanning the full notebook
+      // for every keystroke only adds work on all participating browsers.
+      for (const changedType of transaction.changed.keys()) {
+        if (!(changedType instanceof Y.Text)) {
+          repair();
+          break;
+        }
+      }
+    };
+    documents.editorDocument.on("afterTransaction", repairAfterStructuralChange);
     repair();
-    return () => documents.editorDocument.off("update", repair);
+    return () => documents.editorDocument.off("afterTransaction", repairAfterStructuralChange);
   }, [documents.editorDocument]);
 
   const requestRun = useCallback(
@@ -515,6 +556,7 @@ export function useCollaborationRelay({
     providerKey: provider?.id ?? "opening",
     participants,
     status,
+    hasSynchronized,
     error,
     requestRun,
     sendRunResult,

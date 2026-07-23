@@ -3,6 +3,7 @@ import {
   COLLABORATION_IFRAME_SANDBOX,
   COLLABORATION_SANDBOX_CSP,
   createCollaborationSandboxSrcdoc,
+  formatCollaborationExecutionError,
 } from "./collaborationPythonSandbox";
 
 describe("opaque collaboration Python sandbox", () => {
@@ -29,8 +30,39 @@ describe("opaque collaboration Python sandbox", () => {
     expect(srcdoc).not.toContain('type: "module"');
     expect(srcdoc).toContain("new TextDecoder");
     expect(srcdoc).toContain("write: (buffer)");
+    expect(srcdoc).toContain("stderr: capturedStderr");
     expect(srcdoc).not.toContain("String.fromCharCode");
     expect(srcdoc).not.toContain("firebase");
     expect(srcdoc).not.toContain("localStorage");
+  });
+
+  it("keeps captured stderr but removes Pyodide internals from exceptions", () => {
+    const traceback = `Traceback (most recent call last):
+  File "/lib/python311.zip/_pyodide/_base.py", line 573, in eval_code_async
+    await CodeRunner(
+  File "/lib/python311.zip/_pyodide/_base.py", line 393, in run_async
+    coroutine = eval(self.code, globals, locals)
+  File "<exec>", line 4, in <module>
+    calculate()
+  File "<exec>", line 2, in calculate
+    return 1 / 0
+           ~~^~~
+ZeroDivisionError: division by zero`;
+
+    expect(formatCollaborationExecutionError("warning from your code\n", traceback)).toEqual({
+      stderr: `warning from your code
+Your code, line 4:
+    calculate()
+Your code, line 2 in calculate:
+    return 1 / 0
+           ~~^~~
+ZeroDivisionError: division by zero`,
+      error: `Your code, line 4:
+    calculate()
+Your code, line 2 in calculate:
+    return 1 / 0
+           ~~^~~
+ZeroDivisionError: division by zero`,
+    });
   });
 });

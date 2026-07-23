@@ -4,10 +4,15 @@ export const COLLABORATION_SCHEMA_VERSION = 1;
 export const INITIAL_CELL_ID = "cell-initial";
 export const MAX_NOTEBOOK_CELLS = 50;
 export const MAX_CELL_SOURCE_BYTES = 50 * 1024;
+export const MAX_CELL_STDIN_BYTES = 8 * 1024;
 export const MAX_EXECUTION_OUTPUT_BYTES = 20 * 1024;
+export const COLLABORATION_RUN_COOLDOWN_MS = 1_000;
 
 const INITIAL_NOTEBOOK_UPDATE_BASE64 =
   "AQbMmL2aBAAnAQVjZWxscwxjZWxsLWluaXRpYWwBKADMmL2aBAACaWQBdwxjZWxsLWluaXRpYWwoAMyYvZoEAAhsYW5ndWFnZQF3BnB5dGhvbigAzJi9mgQAB2RlbGV0ZWQBeScAzJi9mgQABnNvdXJjZQIIAQljZWxsT3JkZXIBdwxjZWxsLWluaXRpYWwA";
+// This additive seed keeps the original struct ids stable for clients that
+// already applied the v1 notebook seed while adding shared stdin to its cell.
+const INITIAL_STDIN_UPDATE_BASE64 = "AQGfxP+nCgAnAMyYvZoEAAVzdGRpbgIA";
 
 export type NotebookExecutionStatus =
   | "running"
@@ -34,6 +39,7 @@ export interface NotebookCell {
   id: string;
   language: "python";
   source: Y.Text;
+  stdin: Y.Text | null;
   execution: NotebookExecution | null;
 }
 
@@ -66,6 +72,7 @@ function decodeBase64(value: string): Uint8Array {
 
 export function applyInitialNotebookUpdate(document: Y.Doc): void {
   Y.applyUpdate(document, decodeBase64(INITIAL_NOTEBOOK_UPDATE_BASE64), "notebook-seed");
+  Y.applyUpdate(document, decodeBase64(INITIAL_STDIN_UPDATE_BASE64), "notebook-seed");
 }
 
 export function getNotebookCellOrder(document: Y.Doc): Y.Array<string> {
@@ -93,24 +100,85 @@ export function getNotebookCellSource(document: Y.Doc, cellId: string): Y.Text |
   return value instanceof Y.Text ? value : null;
 }
 
+export function getNotebookCellInput(document: Y.Doc, cellId: string): Y.Text | null {
+  const value = getNotebookCellMap(document, cellId)?.get("stdin");
+  return value instanceof Y.Text ? value : null;
+}
+
+export function replaceNotebookCellInput(stdin: Y.Text, value: string): boolean {
+  value = truncateUtf8(value, MAX_CELL_STDIN_BYTES);
+  const current = stdin.toString();
+  if (current === value) return false;
+
+  const currentCharacters = Array.from(current);
+  const nextCharacters = Array.from(value);
+  let prefixCharacters = 0;
+  let prefix = 0;
+  while (
+    prefixCharacters < currentCharacters.length &&
+    prefixCharacters < nextCharacters.length &&
+    currentCharacters[prefixCharacters] === nextCharacters[prefixCharacters]
+  ) {
+    prefix += currentCharacters[prefixCharacters].length;
+    prefixCharacters += 1;
+  }
+
+  let currentEnd = current.length;
+  let valueEnd = value.length;
+  let currentCharacterIndex = currentCharacters.length - 1;
+  let nextCharacterIndex = nextCharacters.length - 1;
+  while (
+    currentCharacterIndex >= prefixCharacters &&
+    nextCharacterIndex >= prefixCharacters &&
+    currentCharacters[currentCharacterIndex] === nextCharacters[nextCharacterIndex]
+  ) {
+    currentEnd -= currentCharacters[currentCharacterIndex].length;
+    valueEnd -= nextCharacters[nextCharacterIndex].length;
+    currentCharacterIndex -= 1;
+    nextCharacterIndex -= 1;
+  }
+
+  const apply = () => {
+    if (currentEnd > prefix) stdin.delete(prefix, currentEnd - prefix);
+    if (valueEnd > prefix) stdin.insert(prefix, value.slice(prefix, valueEnd));
+  };
+  if (stdin.doc) stdin.doc.transact(apply, "notebook-stdin");
+  else apply();
+  return true;
+}
+
 export function notebookSourceByteLength(source: string | Y.Text): number {
   return new TextEncoder().encode(typeof source === "string" ? source : source.toString()).byteLength;
 }
 
-export function trimNotebookCellSource(source: Y.Text): boolean {
-  const value = source.toString();
-  if (notebookSourceByteLength(value) <= MAX_CELL_SOURCE_BYTES) return false;
+function truncateUtf8(value: string, maximumBytes: number): string {
+  if (new TextEncoder().encode(value).byteLength <= maximumBytes) return value;
   const encoder = new TextEncoder();
   let bytes = 0;
   let end = 0;
   for (const character of value) {
     const characterBytes = encoder.encode(character).byteLength;
-    if (bytes + characterBytes > MAX_CELL_SOURCE_BYTES) break;
+    if (bytes + characterBytes > maximumBytes) break;
     bytes += characterBytes;
     end += character.length;
   }
-  source.delete(end, source.length - end);
+  return value.slice(0, end);
+}
+
+function trimNotebookText(text: Y.Text, maximumBytes: number): boolean {
+  const value = text.toString();
+  const bounded = truncateUtf8(value, maximumBytes);
+  if (bounded === value) return false;
+  text.delete(bounded.length, text.length - bounded.length);
   return true;
+}
+
+export function trimNotebookCellSource(source: Y.Text): boolean {
+  return trimNotebookText(source, MAX_CELL_SOURCE_BYTES);
+}
+
+export function trimNotebookCellInput(stdin: Y.Text): boolean {
+  return trimNotebookText(stdin, MAX_CELL_STDIN_BYTES);
 }
 
 function isVisibleCell(cell: Y.Map<unknown> | undefined): cell is Y.Map<unknown> {
@@ -143,10 +211,12 @@ export function readNotebookSnapshot(document: Y.Doc): NotebookSnapshot {
   return {
     cells: canonicalVisibleCellIds(document).slice(0, MAX_NOTEBOOK_CELLS).map((id) => {
       const cell = cells.get(id)!;
+      const stdin = cell.get("stdin");
       return {
         id,
         language: "python" as const,
         source: cell.get("source") as Y.Text,
+        stdin: stdin instanceof Y.Text ? stdin : null,
         execution: parseExecution(executions.get(id)),
       };
     }),
@@ -175,7 +245,9 @@ export function normalizeNotebookStructure(document: Y.Doc): boolean {
     for (const id of removals) {
       const cell = getNotebookCellMap(document, id);
       const source = cell?.get("source");
+      const stdin = cell?.get("stdin");
       if (source instanceof Y.Text && source.length) source.delete(0, source.length);
+      if (stdin instanceof Y.Text && stdin.length) stdin.delete(0, stdin.length);
       getNotebookCells(document).delete(id);
       getNotebookExecutions(document).delete(id);
     }
@@ -194,36 +266,12 @@ function createCellMap(id: string): Y.Map<unknown> {
   cell.set("language", "python");
   cell.set("deleted", false);
   cell.set("source", new Y.Text());
+  cell.set("stdin", new Y.Text());
   return cell;
 }
 
 function makeCellId(): string {
   return `cell-${crypto.randomUUID()}`;
-}
-
-/** Repairs only the otherwise unusable zero-cell state after concurrent deletes. */
-export function ensureNotebookHasCell(document: Y.Doc): void {
-  if (readNotebookSnapshot(document).cells.length > 0) return;
-  const cells = getNotebookCells(document);
-  const reusableId = Array.from(cells.keys()).sort()[0] ?? INITIAL_CELL_ID;
-
-  document.transact(() => {
-    let cell = cells.get(reusableId);
-    if (!(cell instanceof Y.Map)) {
-      cell = createCellMap(reusableId);
-      cells.set(reusableId, cell);
-    }
-    cell.set("deleted", false);
-    const source = cell.get("source");
-    if (source instanceof Y.Text) {
-      if (source.length) source.delete(0, source.length);
-    } else {
-      cell.set("source", new Y.Text());
-    }
-    getNotebookExecutions(document).delete(reusableId);
-    const order = getNotebookCellOrder(document);
-    if (!order.toArray().includes(reusableId)) order.push([reusableId]);
-  }, "notebook-repair");
 }
 
 export function addNotebookCell(document: Y.Doc, afterCellId?: string): string | null {
@@ -271,8 +319,10 @@ export function deleteNotebookCell(document: Y.Doc, cellId: string): boolean {
   document.transact(() => {
     if (snapshot.cells.length === 1) {
       if (cell.source.length) cell.source.delete(0, cell.source.length);
+      if (cell.stdin?.length) cell.stdin.delete(0, cell.stdin.length);
     } else {
       if (cell.source.length) cell.source.delete(0, cell.source.length);
+      if (cell.stdin?.length) cell.stdin.delete(0, cell.stdin.length);
       getNotebookCells(document).delete(cellId);
       const order = getNotebookCellOrder(document);
       for (let index = order.length - 1; index >= 0; index -= 1) {
@@ -281,7 +331,6 @@ export function deleteNotebookCell(document: Y.Doc, cellId: string): boolean {
     }
     getNotebookExecutions(document).delete(cellId);
   }, "notebook-structure");
-  ensureNotebookHasCell(document);
   return true;
 }
 

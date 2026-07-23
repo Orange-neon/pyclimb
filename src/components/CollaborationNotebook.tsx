@@ -12,14 +12,19 @@ import {
   Wifi,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Y from "yjs";
 import type { CollaborationRoomSession } from "../types/collaboration";
 import { useCollaborationPython } from "../hooks/useCollaborationPython";
 import { useCollaborationRelay } from "../hooks/useCollaborationRelay";
 import {
+  COLLABORATION_RUN_COOLDOWN_MS,
   MAX_CELL_SOURCE_BYTES,
   MAX_NOTEBOOK_CELLS,
   addNotebookCell,
   deleteNotebookCell,
+  getNotebookCellOrder,
+  getNotebookCells,
+  getNotebookExecutions,
   hashNotebookSource,
   moveNotebookCell,
   notebookSourceByteLength,
@@ -54,29 +59,36 @@ function CollaborationNotebookRoom({
   const [leaving, setLeaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
-  const [cooldownRemaining, setCooldownRemaining] = useState(0);
-  const [cellInputs, setCellInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const update = () => setDocumentRevision((current) => current + 1);
-    relay.document.on("update", update);
-    return () => relay.document.off("update", update);
+    const cells = getNotebookCells(relay.document);
+    const cellOrder = getNotebookCellOrder(relay.document);
+    const executions = getNotebookExecutions(relay.document);
+    const updateForCellMetadata = (events: Array<{ target: unknown }>) => {
+      // Monaco and the stdin field subscribe to their own Y.Text instances.
+      // Text edits therefore do not need to rebuild every cell in the room.
+      if (events.some((event) => !(event.target instanceof Y.Text))) update();
+    };
+    cells.observeDeep(updateForCellMetadata);
+    cellOrder.observe(update);
+    executions.observe(update);
+    return () => {
+      cells.unobserveDeep(updateForCellMetadata);
+      cellOrder.unobserve(update);
+      executions.unobserve(update);
+    };
   }, [relay.document]);
 
   useEffect(() => {
-    if (cooldownUntil <= Date.now()) {
-      setCooldownRemaining(0);
+    if (cooldownUntil === 0) return;
+    const remaining = cooldownUntil - Date.now();
+    if (remaining <= 0) {
+      setCooldownUntil(0);
       return;
     }
-    let intervalId = 0;
-    const update = () => {
-      const remaining = Math.max(0, cooldownUntil - Date.now());
-      setCooldownRemaining(remaining);
-      if (remaining === 0 && intervalId) window.clearInterval(intervalId);
-    };
-    update();
-    intervalId = window.setInterval(update, 50);
-    return () => window.clearInterval(intervalId);
+    const timeoutId = window.setTimeout(() => setCooldownUntil(0), remaining);
+    return () => window.clearTimeout(timeoutId);
   }, [cooldownUntil]);
 
   const snapshot = useMemo(
@@ -89,6 +101,11 @@ function CollaborationNotebookRoom({
       const cell = readNotebookSnapshot(relay.document).cells.find((item) => item.id === cellId);
       if (!cell || busyCellId) return;
       const source = cell.source.toString();
+      if (!cell.stdin) {
+        setError("Shared input for this cell is still syncing. Try again shortly.");
+        return;
+      }
+      const stdin = cell.stdin.toString();
       if (notebookSourceByteLength(source) > MAX_CELL_SOURCE_BYTES) {
         setError("This cell is over the 50 KiB source limit.");
         return;
@@ -99,15 +116,11 @@ function CollaborationNotebookRoom({
         relay.flush();
         const sourceHash = await hashNotebookSource(source);
         const accepted = await relay.requestRun(cellId, sourceHash);
-        setCooldownUntil(Date.now() + 500);
+        setCooldownUntil(Date.now() + COLLABORATION_RUN_COOLDOWN_MS);
         // Use a local duration rather than comparing client and relay clocks.
         // The small margin leaves time for the result frame to reach the relay.
         const remaining = Math.max(100, Math.min(4_850, accepted.timeoutMs - 150));
-        const result = await python.execute(
-          accepted.source,
-          cellInputs[cellId] ?? "",
-          remaining,
-        );
+        const result = await python.execute(accepted.source, stdin, remaining);
         const bounded = truncateExecutionOutput(result);
         relay.sendRunResult({
           type: "run-result",
@@ -125,7 +138,7 @@ function CollaborationNotebookRoom({
         setBusyCellId(null);
       }
     },
-    [busyCellId, cellInputs, python, relay],
+    [busyCellId, python, relay],
   );
 
   const leave = async () => {
@@ -152,12 +165,19 @@ function CollaborationNotebookRoom({
   };
 
   const connected = relay.status === "connected";
-  const canRun = connected && python.status === "ready" && !busyCellId && cooldownRemaining === 0;
+  const canRun = connected && python.status === "ready" && !busyCellId && cooldownUntil === 0;
+  const repairingEmptyNotebook =
+    snapshot.cells.length === 0 &&
+    (relay.status === "connecting" ||
+      relay.status === "syncing" ||
+      relay.status === "connected");
   const statusLabel =
     relay.status === "connected"
       ? "Synced"
       : relay.status === "offline"
-        ? "Offline — edits stay on this screen"
+        ? relay.hasSynchronized
+          ? "Offline — edits stay on this screen"
+          : "Offline — first room sync required"
         : relay.status === "unsynced"
           ? "Offline/unsynced — reconnecting"
         : relay.status === "error"
@@ -293,20 +313,17 @@ function CollaborationNotebookRoom({
                 roomInstanceId={session.roomInstanceId}
                 awareness={relay.awareness!}
                 running={busyCellId === cell.id || cell.execution?.status === "running"}
-                stdin={cellInputs[cell.id] ?? ""}
+                editingDisabled={!relay.hasSynchronized}
                 runDisabled={
                   !canRun ||
-                  cell.execution?.status === "running" ||
-                  notebookSourceByteLength(cell.source) > MAX_CELL_SOURCE_BYTES
+                  !cell.stdin ||
+                  cell.execution?.status === "running"
                 }
                 moveUpDisabled={index === 0}
                 moveDownDisabled={index === snapshot.cells.length - 1}
                 addBelowDisabled={snapshot.cells.length >= MAX_NOTEBOOK_CELLS}
                 onlyCell={snapshot.cells.length === 1}
                 onFocus={() => relay.setActiveCell(cell.id)}
-                onStdinChange={(value) =>
-                  setCellInputs((current) => ({ ...current, [cell.id]: value }))
-                }
                 onRun={() => void runCell(cell.id)}
                 onMove={(direction) => moveNotebookCell(relay.document, cell.id, direction)}
                 onAddBelow={() => addNotebookCell(relay.document, cell.id)}
@@ -316,19 +333,29 @@ function CollaborationNotebookRoom({
 
             <button
               type="button"
-              disabled={snapshot.cells.length >= MAX_NOTEBOOK_CELLS}
+              disabled={
+                !relay.hasSynchronized ||
+                snapshot.cells.length >= MAX_NOTEBOOK_CELLS ||
+                repairingEmptyNotebook
+              }
               onClick={() => addNotebookCell(relay.document, snapshot.cells.at(-1)?.id)}
               className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-700 bg-slate-950/30 px-4 py-4 text-sm font-bold text-slate-400 hover:border-sky-400/40 hover:bg-sky-400/5 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-35"
             >
               <Plus size={17} />
-              {snapshot.cells.length >= MAX_NOTEBOOK_CELLS ? "50-cell room limit reached" : "Add Python cell"}
+              {!relay.hasSynchronized
+                ? "Waiting for the first room sync…"
+                : snapshot.cells.length >= MAX_NOTEBOOK_CELLS
+                  ? "50-cell room limit reached"
+                  : repairingEmptyNotebook
+                    ? "Repairing shared notebook…"
+                    : "Add Python cell"}
             </button>
           </section>
         )}
 
         <footer className="mx-auto mt-4 max-w-3xl text-center text-xs leading-5 text-slate-600">
-          Each run uses a fresh, isolated Python namespace on the runner’s browser. Shared output is collaborator-provided and is not trusted server computation.
-          {cooldownRemaining > 0 ? ` Run available in ${Math.ceil(cooldownRemaining)} ms.` : ""}
+          Each run captures the shared input when Run is clicked and uses a fresh, isolated Python namespace on the runner’s browser. Shared output is collaborator-provided and is not trusted server computation.
+          {cooldownUntil > 0 ? " One-second run cooldown active." : ""}
         </footer>
       </div>
     </main>

@@ -7,7 +7,16 @@ import {
   getSyncMessageSubtype,
   measureMergedDocumentBytes,
 } from "./yjs-frame";
+import { ensureRelayNotebookSchema } from "./execution-cell";
 import { RELAY_LIMITS } from "./protocol";
+
+const PRE_STDIN_NOTEBOOK_UPDATE_BASE64 =
+  "AQbMmL2aBAAnAQVjZWxscwxjZWxsLWluaXRpYWwBKADMmL2aBAACaWQBdwxjZWxsLWluaXRpYWwoAMyYvZoEAAhsYW5ndWFnZQF3BnB5dGhvbigAzJi9mgQAB2RlbGV0ZWQBeScAzJi9mgQABnNvdXJjZQIIAQljZWxsT3JkZXIBdwxjZWxsLWluaXRpYWwA";
+
+function decodeBase64(value: string): Uint8Array {
+  const decoded = atob(value);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
 
 function encodeVarUint(value: number): number[] {
   const bytes: number[] = [];
@@ -78,6 +87,47 @@ describe("Yjs relay frame parsing", () => {
     secondClient.destroy();
     thirdClient.destroy();
     server.destroy();
+    expected.destroy();
+  });
+
+  it("includes authoritative schema repair in near-cap admission measurement", () => {
+    const server = new Y.Doc();
+    server.clientID = 0x70000001;
+    server
+      .getText("padding")
+      .insert(0, "x".repeat(RELAY_LIMITS.maxDocumentBytes - 1_200));
+
+    const client = new Y.Doc();
+    Y.applyUpdate(client, Y.encodeStateAsUpdate(server));
+    Y.applyUpdate(client, decodeBase64(PRE_STDIN_NOTEBOOK_UPDATE_BASE64));
+    const incomingUpdate = Y.encodeStateAsUpdate(client, Y.encodeStateVector(server));
+    const frame = syncFrame(2, incomingUpdate);
+
+    const rawMergedSize = measureMergedDocumentBytes(server, frame);
+    const repairedMergedSize = measureMergedDocumentBytes(
+      server,
+      frame,
+      ensureRelayNotebookSchema,
+    );
+
+    const expected = new Y.Doc();
+    Y.applyUpdate(expected, Y.encodeStateAsUpdate(server));
+    Y.applyUpdate(expected, incomingUpdate);
+    ensureRelayNotebookSchema(expected);
+    expect(repairedMergedSize).toBe(Y.encodeStateAsUpdate(expected).byteLength);
+    expect(repairedMergedSize).toBeGreaterThan(rawMergedSize!);
+
+    // Without measuring the relay-owned Y.Text, the 1 KiB encoding margin
+    // would accept this update. Including repair correctly rejects it.
+    expect(
+      rawMergedSize! + RELAY_LIMITS.schemaRepairEncodingMarginBytes,
+    ).toBeLessThanOrEqual(RELAY_LIMITS.maxDocumentBytes);
+    expect(
+      repairedMergedSize! + RELAY_LIMITS.schemaRepairEncodingMarginBytes,
+    ).toBeGreaterThan(RELAY_LIMITS.maxDocumentBytes);
+
+    server.destroy();
+    client.destroy();
     expected.destroy();
   });
 });

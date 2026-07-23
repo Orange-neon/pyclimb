@@ -6,7 +6,11 @@ import { compactConnectionTicket, type RelayConnectionTicket } from "./connectio
 import { DocumentSizeBudget } from "./document-size-budget";
 import { MembershipError, verifyFirebaseRoomMembership } from "./firebase";
 import { executionStatusForResult } from "./execution-policy";
-import { getExecutableCellSource, removeExecutionForMissingCell } from "./execution-cell";
+import {
+  ensureRelayNotebookSchema,
+  getExecutableCellSource,
+  removeExecutionForMissingCell,
+} from "./execution-cell";
 import { readBoundedUtf8Body } from "./http-body";
 import { corsHeaders, isAllowedOrigin } from "./origins";
 import {
@@ -387,12 +391,21 @@ export class CollaborationRoom extends YServer<Env> {
         this.documentSize.estimate + incomingUpdateBytes + executionReserve >
         RELAY_LIMITS.maxDocumentBytes - 64 * 1024;
       if (this.documentSize.needsExactMeasurement(incomingUpdateBytes) || needsReservedCapacityCheck) {
-        const mergedSize = measureMergedDocumentBytes(this.document, binary);
+        const mergedSize = measureMergedDocumentBytes(
+          this.document,
+          binary,
+          ensureRelayNotebookSchema,
+        );
         if (mergedSize === null) {
           connection.close(1003, "Malformed Yjs sync frame");
           return;
         }
-        if (mergedSize + executionReserve > RELAY_LIMITS.maxDocumentBytes) {
+        if (
+          mergedSize +
+            executionReserve +
+            RELAY_LIMITS.schemaRepairEncodingMarginBytes >
+          RELAY_LIMITS.maxDocumentBytes
+        ) {
           connection.close(1009, "Shared document limit exceeded");
           return;
         }
@@ -403,8 +416,17 @@ export class CollaborationRoom extends YServer<Env> {
     super.onMessage(connection, message);
 
     if (mutatesDocument) {
-      if (exactMergedSize === undefined) this.documentSize.recordEstimatedUpdate(incomingUpdateBytes);
-      else this.documentSize.recordExactMeasurement(exactMergedSize);
+      // During initial/hibernation sync, wait for every responder before the
+      // relay authoritatively repairs legacy input and zero-cell states.
+      const repairedSchema =
+        this.documentSync.ready && ensureRelayNotebookSchema(this.document);
+      if (repairedSchema) {
+        this.documentSize.recordExactMeasurement(Y.encodeStateAsUpdate(this.document).byteLength);
+      } else if (exactMergedSize === undefined) {
+        this.documentSize.recordEstimatedUpdate(incomingUpdateBytes);
+      } else {
+        this.documentSize.recordExactMeasurement(exactMergedSize);
+      }
     }
     if (this.documentSync.observeSyncSubtype(connection.id, syncSubtype)) this.queueDocumentReady();
   }
@@ -888,6 +910,11 @@ export class CollaborationRoom extends YServer<Env> {
 
   private queueDocumentReady(): void {
     this.controlQueue = this.controlQueue
+      .then(() => {
+        if (ensureRelayNotebookSchema(this.document)) {
+          this.documentSize.recordExactMeasurement(Y.encodeStateAsUpdate(this.document).byteLength);
+        }
+      })
       .then(() => this.reconcileRunsAfterSync())
       .then(() => this.announceControlReady())
       .catch(() => undefined);

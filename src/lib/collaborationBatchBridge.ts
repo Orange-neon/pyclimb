@@ -3,6 +3,11 @@ import * as Y from "yjs";
 const REMOTE_BRIDGE_ORIGIN = Symbol("collaboration-remote-update");
 const LOCAL_BRIDGE_ORIGIN = Symbol("collaboration-local-batch");
 
+// Cloudflare recommends 50–100 ms WebSocket batching for high-frequency
+// realtime data. The lower bound keeps shared typing responsive while still
+// coalescing Monaco/Yjs bursts into at most 20 transport updates per second.
+export const COLLABORATION_EDIT_BATCH_MS = 50;
+
 export interface BatchedDocumentBridge {
   flush(): void;
   destroy(): void;
@@ -17,7 +22,7 @@ export interface BatchedDocumentBridge {
 export function createBatchedDocumentBridge(
   editorDocument: Y.Doc,
   transportDocument: Y.Doc,
-  delayMs = 100,
+  delayMs = COLLABORATION_EDIT_BATCH_MS,
 ): BatchedDocumentBridge {
   let pendingCount = 0;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
