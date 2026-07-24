@@ -28,6 +28,7 @@ export interface RaceController {
   rank: number;
   remaining: Record<Difficulty, number>;
   events: RaceEvent[];
+  interactionReady?: boolean;
   currentStreak?: number;
   challenge?: RoomChallenge | null;
   headToHead?: boolean;

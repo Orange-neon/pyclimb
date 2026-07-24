@@ -103,21 +103,26 @@ export function finishRaceHistory(
 ): CompletedRaceHistory | null {
   const active = readJson<ActiveRaceHistoryMap>(storage, ACTIVE_RACE_HISTORY_KEY, {});
   const race = active[input.id];
-  if (!race || !Object.keys(race.problems).length) return null;
+  const completedHistory = readCompletedRaceHistory(storage);
+  const existing = completedHistory.find((item) => item.id === input.id);
+  if ((!race || !Object.keys(race.problems).length) && !existing) return null;
 
   const solved = new Set(input.solvedIds ?? []);
-  const problems = Object.values(race.problems)
+  const problems = (race ? Object.values(race.problems) : existing!.problems)
     .map((problem) => ({
       ...problem,
       status: solved.has(problem.problemId) ? "solved" as const : problem.status,
     }))
     .sort((left, right) => right.lastUpdatedAt - left.lastUpdatedAt);
-  const finishedAt = input.finishedAt ?? Date.now();
+  const finishedAt = input.finishedAt ?? existing?.finishedAt ?? Date.now();
   const earliestProblemOpenedAt = problems.reduce(
     (earliest, problem) => Math.min(earliest, problem.firstOpenedAt),
     finishedAt,
   );
-  const startedAt = Math.min(input.startedAt ?? earliestProblemOpenedAt, finishedAt);
+  const startedAt = Math.min(
+    input.startedAt ?? existing?.startedAt ?? earliestProblemOpenedAt,
+    finishedAt,
+  );
   const completed: CompletedRaceHistory = {
     id: input.id,
     mode: input.mode,
@@ -131,14 +136,16 @@ export function finishRaceHistory(
     playerCount: Math.max(1, input.playerCount),
     problems,
   };
-  const previous = readCompletedRaceHistory(storage).filter((item) => item.id !== input.id);
+  const previous = completedHistory.filter((item) => item.id !== input.id);
   writeJson(
     storage,
     COMPLETED_RACE_HISTORY_KEY,
     [completed, ...previous].slice(0, MAX_COMPLETED_RACES),
   );
-  delete active[input.id];
-  writeJson(storage, ACTIVE_RACE_HISTORY_KEY, active);
+  if (race) {
+    delete active[input.id];
+    writeJson(storage, ACTIVE_RACE_HISTORY_KEY, active);
+  }
   return completed;
 }
 

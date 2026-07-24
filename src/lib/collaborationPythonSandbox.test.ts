@@ -19,6 +19,10 @@ describe("opaque collaboration Python sandbox", () => {
     expect(srcdoc).toContain('message.channel !== channel');
     expect(srcdoc).toContain("runtime.toPy");
     expect(srcdoc).toContain("globals.destroy");
+    expect(srcdoc).toContain("__col_user_code__");
+    expect(srcdoc).toContain("__col_base_exception = BaseException");
+    expect(srcdoc).toContain("except __col_base_exception");
+    expect(srcdoc).toContain("<col-runner>");
     expect(srcdoc).toContain("createInputReader");
     expect(srcdoc).toContain("runtime.setStdin");
     expect(srcdoc).toContain('typeof message.stdin !== "string"');

@@ -9,6 +9,7 @@ import {
   Play,
   Radio,
   UserRoundMinus,
+  UserRoundPlus,
   Users,
 } from "lucide-react";
 import { useState } from "react";
@@ -28,6 +29,7 @@ interface RoomLobbyProps {
   onStart?: () => void;
   onRetryPython?: () => void;
   onMakeSpectator?: (uid: string) => void | Promise<void>;
+  onMakePlayer?: (uid: string) => void | Promise<void>;
   onLeave: () => void;
 }
 
@@ -44,6 +46,7 @@ export function RoomLobby({
   onStart,
   onRetryPython,
   onMakeSpectator,
+  onMakePlayer,
   onLeave,
 }: RoomLobbyProps) {
   const [assigningUid, setAssigningUid] = useState<string | null>(null);
@@ -58,6 +61,19 @@ export function RoomLobby({
     setAssignmentError(null);
     try {
       await onMakeSpectator(player.uid);
+    } catch (reason) {
+      setAssignmentError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAssigningUid(null);
+    }
+  };
+
+  const makePlayer = async (spectator: RoomSpectator) => {
+    if (!onMakePlayer || assigningUid) return;
+    setAssigningUid(spectator.uid);
+    setAssignmentError(null);
+    try {
+      await onMakePlayer(spectator.uid);
     } catch (reason) {
       setAssignmentError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -184,7 +200,24 @@ export function RoomLobby({
                       <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-300">
                         {spectator.nickname}
                       </span>
-                      <Eye size={15} className="shrink-0 text-violet-300/70" />
+                      {role === "host" && onMakePlayer ? (
+                        <button
+                          type="button"
+                          disabled={Boolean(assigningUid)}
+                          onClick={() => void makePlayer(spectator)}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-2 py-1.5 text-[10px] font-black text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-wait disabled:opacity-50"
+                          aria-label={`Make ${spectator.nickname} a contestant`}
+                        >
+                          {assigningUid === spectator.uid ? (
+                            <LoaderCircle size={12} className="animate-spin" />
+                          ) : (
+                            <UserRoundPlus size={12} />
+                          )}
+                          Compete
+                        </button>
+                      ) : (
+                        <Eye size={15} className="shrink-0 text-violet-300/70" />
+                      )}
                     </div>
                   ))}
                 </div>

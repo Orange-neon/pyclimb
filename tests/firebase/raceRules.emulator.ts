@@ -318,6 +318,37 @@ describe("competitive race Realtime Database rules", () => {
     await assertSucceeds(host.ref(`${ROOM_PATH}/spectators/player`).remove());
   });
 
+  it("lets the host atomically return a spectator to the contestant roster", async () => {
+    await seedRoom();
+    const host = anonymousDatabase("host");
+    const returningPlayer = {
+      ...contestant("spectator", "Spectator"),
+      ready: false,
+    };
+
+    await assertSucceeds(
+      host.ref(ROOM_PATH).update({
+        "leaderboard/spectator": returningPlayer,
+        "progress/spectator": progress(),
+        "spectators/spectator": null,
+      }),
+    );
+
+    const updatedRoom = await assertSucceeds(host.ref(ROOM_PATH).once("value"));
+    expect(updatedRoom.child("spectators/spectator").exists()).toBe(false);
+    expect(updatedRoom.child("leaderboard/spectator").val()).toEqual(returningPlayer);
+    expect(updatedRoom.child("progress/spectator").val()).toEqual(progress());
+
+    const promoted = anonymousDatabase("spectator");
+    await assertSucceeds(
+      promoted.ref(`${ROOM_PATH}/leaderboard/spectator/online`).set(false),
+    );
+    await assertSucceeds(
+      promoted.ref(`${ACTIVITY_PATH}/spectator`).set(activity()),
+    );
+    await assertFails(promoted.ref(ACTIVITY_PATH).once("value"));
+  });
+
   it("blocks stale contestant writes after spectator assignment", async () => {
     await seedRoom({
       ...room({ includeSpectator: true }),
@@ -377,6 +408,37 @@ describe("competitive race Realtime Database rules", () => {
     });
     await assertFails(
       anonymousDatabase("peer").ref(`${ROOM_PATH}/challenge`).set(finishedChallenge),
+    );
+  });
+
+  it("keeps a finished challenge reserved until the host retires it", async () => {
+    const replacement = {
+      ...challenge("waiting"),
+      id: "challenge-2",
+      createdAt: CREATED_AT + 7_000,
+    };
+    await seedRoom({
+      ...room(),
+      challenge: challenge("finished"),
+    });
+
+    await assertFails(
+      anonymousDatabase("player")
+        .ref(`${ROOM_PATH}/challenge`)
+        .set(replacement),
+    );
+    await assertFails(
+      anonymousDatabase("host")
+        .ref(`${ROOM_PATH}/challenge`)
+        .set(replacement),
+    );
+    await assertSucceeds(
+      anonymousDatabase("host").ref(`${ROOM_PATH}/challenge`).remove(),
+    );
+    await assertSucceeds(
+      anonymousDatabase("player")
+        .ref(`${ROOM_PATH}/challenge`)
+        .set(replacement),
     );
   });
 });

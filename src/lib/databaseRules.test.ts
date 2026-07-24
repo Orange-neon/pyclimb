@@ -100,7 +100,15 @@ describe("Realtime Database rule shape", () => {
     expect(challengeWrite).toContain("child('progress').child(auth.uid).child('currentStreak')");
     expect(challengeWrite).toContain("championUid");
     expect(challengeWrite).toContain("winnerUid");
-    expect(String(challenge[".validate"])).toContain("problemReward");
+    expect(challengeWrite).toContain("!data.exists()");
+    expect(challengeWrite).not.toContain(
+      "(!data.exists() || data.child('status').val() === 'finished')",
+    );
+    const challengeValidation = String(challenge[".validate"]);
+    expect(challengeValidation).toContain("problemReward");
+    expect(challengeValidation).not.toContain(
+      "data.child('status').val() === 'finished' ||",
+    );
     const progress = ((room.progress as RuleNode).$uid ?? {}) as RuleNode;
     const awards = ((progress.challengeAwards as RuleNode).$challengeId ?? {}) as RuleNode;
     expect(String(awards[".validate"])).toContain("-2000");

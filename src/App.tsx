@@ -161,6 +161,10 @@ function GameShell({
   }, [activeProblemId, historyRaceId]);
 
   useEffect(() => {
+    if (race.interactionReady === false) {
+      setTimedSeconds(null);
+      return;
+    }
     const problem = race.activeProblem;
     if (!problem?.timedMode || !race.timedDeadline) {
       setTimedSeconds(null);
@@ -200,7 +204,13 @@ function GameShell({
     update();
     const intervalId = window.setInterval(update, 250);
     return () => window.clearInterval(intervalId);
-  }, [notify, race.activeProblem, race.expireTimedProblem, race.timedDeadline]);
+  }, [
+    notify,
+    race.activeProblem,
+    race.expireTimedProblem,
+    race.interactionReady,
+    race.timedDeadline,
+  ]);
 
   const selectDifficulty = (difficulty: Difficulty) => {
     const result = race.selectProblem(difficulty);
@@ -430,7 +440,10 @@ function GameShell({
               output={output}
               pyodideStatus={python.status}
               busy={busy}
-              hasProblem={Boolean(race.activeProblem)}
+              hasProblem={
+                Boolean(race.activeProblem) &&
+                race.interactionReady !== false
+              }
               onStdinChange={race.setStdin}
               onRun={runCode}
               onSubmit={submitSolution}
@@ -507,6 +520,7 @@ function GameShell({
             <button
               type="button"
               onClick={() => race.startPendingProblem?.()}
+              disabled={race.interactionReady === false}
               className={`mt-6 w-full rounded-xl px-4 py-3 text-sm font-black text-slate-950 ${
                 race.pendingProblem.timedMode === "bomb" ? "bg-rose-300" : "bg-amber-300"
               }`}
@@ -590,8 +604,16 @@ function HostRoom({ bank, room, session }: RoomPageProps) {
       tone: "danger",
     });
     if (confirmed) {
-      await room.closeRoom();
-      notify({ tone: "info", title: "Room closed", message: "All participants have been disconnected." });
+      try {
+        await room.closeRoom();
+        notify({ tone: "info", title: "Room closed", message: "All participants have been disconnected." });
+      } catch (reason) {
+        notify({
+          tone: "error",
+          title: "Room was not closed",
+          message: reason instanceof Error ? reason.message : String(reason),
+        });
+      }
     }
   };
   const makeSpectator = async (uid: string) => {
@@ -614,6 +636,29 @@ function HostRoom({ bank, room, session }: RoomPageProps) {
       message: endsRace
         ? "They were the final contestant, so the race has ended."
         : "They have been removed from the standings and can now inspect live code.",
+    });
+  };
+  const makePlayer = async (uid: string) => {
+    const spectator = room.spectators.find((item) => item.uid === uid);
+    if (!spectator) throw new Error("That spectator is no longer in the room.");
+    const confirmed = await confirm({
+      title: `Make ${spectator.nickname} a contestant?`,
+      message:
+        meta.status === "active"
+          ? "They will rejoin the live standings with a fresh score and can immediately choose a problem."
+          : "They will return to the contestant list and can ready up before the race starts.",
+      confirmLabel: "Make contestant",
+      tone: "primary",
+    });
+    if (!confirmed) return;
+    await room.makePlayer(uid);
+    notify({
+      tone: "success",
+      title: `${spectator.nickname} is competing`,
+      message:
+        meta.status === "active"
+          ? "They have rejoined the live race with a fresh score."
+          : "They can now load Python and ready up for the race.",
     });
   };
 
@@ -646,6 +691,7 @@ function HostRoom({ bank, room, session }: RoomPageProps) {
           });
         }}
         onMakeSpectator={makeSpectator}
+        onMakePlayer={makePlayer}
         onLeave={() => void closeRoom()}
       />
     );
@@ -658,7 +704,19 @@ function HostRoom({ bank, room, session }: RoomPageProps) {
         code={session.code}
         players={room.players}
         endReason={meta.endReason}
-        onRematch={room.rematch}
+        challengeSettlementPending={Boolean(
+          room.challenge?.status === "finished" &&
+            room.challenge.winnerUid,
+        )}
+        onRematch={() => {
+          void room.rematch().catch((reason) => {
+            notify({
+              tone: "error",
+              title: "Rematch is not ready",
+              message: reason instanceof Error ? reason.message : String(reason),
+            });
+          });
+        }}
         onClose={() => void closeRoom()}
       />
     );
@@ -676,6 +734,7 @@ function HostRoom({ bank, room, session }: RoomPageProps) {
       spectators={room.spectators}
       canManage
       onMakeSpectator={makeSpectator}
+      onMakePlayer={makePlayer}
       onStop={() => void room.finishRace("host")}
     />
   );
@@ -824,6 +883,7 @@ function ActivePlayerGame({
     requestChallenge: room.requestChallenge,
     recordChallengeSolve: room.recordChallengeSolve,
     challenge: room.challenge,
+    challengeLoaded: room.challengeLoaded,
   });
   const sharedActivityRef = useRef<Omit<RaceActivity, "updatedAt"> | null>(null);
   const sharedProblem = race.activeProblem ?? race.pendingProblem;

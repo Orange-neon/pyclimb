@@ -1,5 +1,5 @@
 import { truncateExecutionOutput } from "./collaborationNotebook";
-import { formatPythonError } from "./pythonError";
+import { formatPythonError, PYTHON_RUNNER_SOURCE } from "./pythonError";
 
 export const COLLABORATION_EXECUTION_TIMEOUT_MS = 5_000;
 export const COLLABORATION_IFRAME_SANDBOX = "allow-scripts";
@@ -34,6 +34,7 @@ export function formatCollaborationExecutionError(
 const PYODIDE_WORKER_SOURCE = String.raw`
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/";
 const MAX_OUTPUT = 20 * 1024;
+const PYTHON_RUNNER_SOURCE = ${JSON.stringify(PYTHON_RUNNER_SOURCE)};
 let runtimePromise = null;
 
 importScripts(PYODIDE_BASE + "pyodide.js");
@@ -85,11 +86,18 @@ async function execute(message) {
   runtime.setStdout({ write: (buffer) => append(stdoutChunks, buffer), isatty: false });
   runtime.setStderr({ write: (buffer) => append(stderrChunks, buffer), isatty: false });
 
-  const globals = runtime.toPy({ __name__: "__main__" });
+  const globals = runtime.toPy({
+    __name__: "__main__",
+    __col_user_code__: message.code,
+  });
   const startedAt = performance.now();
   let error;
   try {
-    await runtime.runPythonAsync(message.code, { globals });
+    const pythonError = await runtime.runPythonAsync(PYTHON_RUNNER_SOURCE, {
+      globals,
+      filename: "<col-runner>",
+    });
+    if (typeof pythonError === "string" && pythonError) error = pythonError;
   } catch (reason) {
     error = safeText(reason && reason.message ? reason.message : reason);
   } finally {

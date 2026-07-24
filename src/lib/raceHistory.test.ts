@@ -108,4 +108,43 @@ describe("completed race history", () => {
     }, storage)).toBeNull();
     expect(readCompletedRaceHistory(storage)).toEqual([]);
   });
+
+  it("refreshes a completed room when delayed scoring arrives", () => {
+    const storage = memoryStorage();
+    recordRaceProblem("delayed-score", "problem", true, 10, storage);
+    finishRaceHistory({
+      id: "delayed-score",
+      mode: "multiplayer",
+      label: "Room LAG123",
+      bankVersion: "v5",
+      startedAt: 5,
+      finishedAt: 20,
+      score: 500,
+      rank: 2,
+      playerCount: 2,
+    }, storage);
+
+    const refreshed = finishRaceHistory({
+      id: "delayed-score",
+      mode: "multiplayer",
+      label: "Room LAG123",
+      bankVersion: "v5",
+      startedAt: 5,
+      finishedAt: 20,
+      score: 1_500,
+      rank: 1,
+      playerCount: 2,
+    }, storage);
+
+    expect(refreshed).toMatchObject({
+      score: 1_500,
+      rank: 1,
+      finishedAt: 20,
+      durationMs: 15,
+    });
+    expect(refreshed?.problems).toEqual([
+      expect.objectContaining({ problemId: "problem", status: "solved" }),
+    ]);
+    expect(readCompletedRaceHistory(storage)).toHaveLength(1);
+  });
 });

@@ -4,6 +4,12 @@ import {
   COLLABORATION_EDIT_BATCH_MS,
   createBatchedDocumentBridge,
 } from "./collaborationBatchBridge";
+import {
+  INITIAL_CELL_ID,
+  applyInitialNotebookUpdate,
+  getNotebookCellInput,
+  getNotebookCellSource,
+} from "./collaborationNotebook";
 
 afterEach(() => vi.useRealTimers());
 
@@ -89,5 +95,80 @@ describe("batched collaboration document bridge", () => {
 
     expect(editor.clientID).not.toBe(transport.clientID);
     expect(transport.clientID).toBe(transportClientId);
+  });
+
+  it("holds sustained typing to one transport update per 50 ms window", () => {
+    vi.useFakeTimers();
+    const editor = new Y.Doc();
+    const transport = new Y.Doc();
+    createBatchedDocumentBridge(editor, transport);
+    const transportUpdates: Uint8Array[] = [];
+    transport.on("update", (update) => transportUpdates.push(update));
+    const source = editor.getText("source");
+
+    for (let window = 0; window < 20; window += 1) {
+      for (let edit = 0; edit < 25; edit += 1) {
+        source.insert(source.length, String.fromCharCode(97 + ((window + edit) % 26)));
+      }
+      vi.advanceTimersByTime(COLLABORATION_EDIT_BATCH_MS - 1);
+      expect(transportUpdates).toHaveLength(window);
+      vi.advanceTimersByTime(1);
+      expect(transportUpdates).toHaveLength(window + 1);
+    }
+
+    expect(source.length).toBe(500);
+    expect(transport.getText("source").toString()).toBe(source.toString());
+    expect(transportUpdates).toHaveLength(20);
+  });
+
+  it("reseeds a fresh relay generation with edits retained by a reconnecting browser", () => {
+    vi.useFakeTimers();
+    const editor = new Y.Doc();
+    const transport = new Y.Doc();
+    applyInitialNotebookUpdate(editor);
+    applyInitialNotebookUpdate(transport);
+    const bridge = createBatchedDocumentBridge(editor, transport);
+
+    getNotebookCellSource(editor, INITIAL_CELL_ID)!.insert(0, "print('before disconnect')\n");
+    bridge.flush();
+
+    const firstRelayGeneration = new Y.Doc();
+    Y.applyUpdate(firstRelayGeneration, Y.encodeStateAsUpdate(transport), "provider");
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(firstRelayGeneration), "provider");
+    getNotebookCellSource(peer, INITIAL_CELL_ID)!.insert(
+      getNotebookCellSource(peer, INITIAL_CELL_ID)!.length,
+      "print('from peer')\n",
+    );
+    getNotebookCellInput(peer, INITIAL_CELL_ID)!.insert(0, "shared input");
+
+    Y.applyUpdate(firstRelayGeneration, Y.encodeStateAsUpdate(peer), "provider");
+    Y.applyUpdate(
+      transport,
+      Y.encodeStateAsUpdate(firstRelayGeneration, Y.encodeStateVector(transport)),
+      "provider",
+    );
+    expect(getNotebookCellSource(editor, INITIAL_CELL_ID)!.toString()).toContain("from peer");
+    expect(getNotebookCellInput(editor, INITIAL_CELL_ID)!.toString()).toBe("shared input");
+
+    getNotebookCellSource(editor, INITIAL_CELL_ID)!.insert(
+      getNotebookCellSource(editor, INITIAL_CELL_ID)!.length,
+      "print('offline edit')\n",
+    );
+    bridge.flush();
+
+    // Production discards the Durable Object's in-memory Y.Doc after the final
+    // sync socket leaves. A reconnecting browser must be able to seed that
+    // brand-new generation from its retained provider document.
+    const freshRelayGeneration = new Y.Doc();
+    Y.applyUpdate(freshRelayGeneration, Y.encodeStateAsUpdate(transport), "provider");
+    const lateJoiner = new Y.Doc();
+    Y.applyUpdate(lateJoiner, Y.encodeStateAsUpdate(freshRelayGeneration), "provider");
+
+    const recoveredSource = getNotebookCellSource(lateJoiner, INITIAL_CELL_ID)!.toString();
+    expect(recoveredSource).toContain("before disconnect");
+    expect(recoveredSource).toContain("from peer");
+    expect(recoveredSource).toContain("offline edit");
+    expect(getNotebookCellInput(lateJoiner, INITIAL_CELL_ID)!.toString()).toBe("shared input");
   });
 });

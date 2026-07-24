@@ -174,6 +174,7 @@ export function useCollaborationRelay({
   const [hasSynchronized, setHasSynchronized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<CollaborationParticipant[]>([]);
+  const [cursorParticipants, setCursorParticipants] = useState<CollaborationParticipant[]>([]);
   const pendingRuns = useRef(new Map<string, PendingRunRequest>());
   const providerRef = useRef<YProvider | null>(null);
   const retryConnectionRef = useRef<(() => void) | null>(null);
@@ -312,13 +313,23 @@ export function useCollaborationRelay({
     });
 
     const updateParticipants = () => {
+      const allParticipants: CollaborationParticipant[] = [];
       const byUid = new Map<string, CollaborationParticipant>();
       for (const [clientId, state] of nextProvider.awareness.getStates()) {
         const participant = parseParticipant(clientId, state, nextProvider.awareness.clientID);
         if (!participant) continue;
+        allParticipants.push(participant);
         const current = byUid.get(participant.uid);
         if (!current || participant.local) byUid.set(participant.uid, participant);
       }
+      allParticipants.sort(
+        (left, right) =>
+          left.local === right.local
+            ? left.nickname.localeCompare(right.nickname) || left.clientId - right.clientId
+            : left.local
+              ? -1
+              : 1,
+      );
       const nextParticipants = Array.from(byUid.values()).sort(
         (left, right) =>
           left.local === right.local
@@ -333,6 +344,12 @@ export function useCollaborationRelay({
       // actually change.
       setParticipants((current) =>
         sameParticipants(current, nextParticipants) ? current : nextParticipants,
+      );
+      // Presence is intentionally deduplicated by Firebase UID so multiple
+      // tabs do not inflate the people count. Cursor decorations are keyed by
+      // Yjs client id, however, so retain every awareness instance for labels.
+      setCursorParticipants((current) =>
+        sameParticipants(current, allParticipants) ? current : allParticipants,
       );
     };
 
@@ -555,6 +572,7 @@ export function useCollaborationRelay({
     awareness: provider?.awareness ?? null,
     providerKey: provider?.id ?? "opening",
     participants,
+    cursorParticipants,
     status,
     hasSynchronized,
     error,

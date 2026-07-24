@@ -1,4 +1,14 @@
-import { AlertTriangle, Clock3, Eye, LogOut, Radio, Square, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Clock3,
+  Eye,
+  LoaderCircle,
+  LogOut,
+  Radio,
+  Square,
+  UserRoundPlus,
+  Users,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ProblemBank } from "../data/problemTypes";
 import type {
@@ -21,6 +31,7 @@ interface HostDashboardProps {
   spectators?: RoomSpectator[];
   canManage?: boolean;
   onMakeSpectator?: (uid: string) => void | Promise<void>;
+  onMakePlayer?: (uid: string) => void | Promise<void>;
   onStop?: () => void;
   onLeave?: () => void;
 }
@@ -36,11 +47,14 @@ export function HostDashboard({
   spectators = [],
   canManage,
   onMakeSpectator,
+  onMakePlayer,
   onStop,
   onLeave,
 }: HostDashboardProps) {
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
-  const managementEnabled = canManage ?? Boolean(onStop || onMakeSpectator);
+  const [promotingUid, setPromotingUid] = useState<string | null>(null);
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const managementEnabled = canManage ?? Boolean(onStop || onMakeSpectator || onMakePlayer);
   const racers: Racer[] = players.map((player) => ({
     id: player.uid,
     name: player.nickname,
@@ -59,6 +73,19 @@ export function HostDashboard({
       setSelectedUid(null);
     }
   }, [players, selectedUid]);
+
+  const makePlayer = async (spectator: RoomSpectator) => {
+    if (!onMakePlayer || promotingUid) return;
+    setPromotingUid(spectator.uid);
+    setPromotionError(null);
+    try {
+      await onMakePlayer(spectator.uid);
+    } catch (reason) {
+      setPromotionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPromotingUid(null);
+    }
+  };
 
   return (
     <main className="grid-glow min-h-screen bg-[#070b16] px-4 py-8 text-slate-100">
@@ -148,10 +175,35 @@ export function HostDashboard({
                       <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-300">
                         {spectator.nickname}
                       </span>
-                      <Eye size={13} className="shrink-0 text-violet-300/70" />
+                      {managementEnabled && onMakePlayer ? (
+                        <button
+                          type="button"
+                          disabled={Boolean(promotingUid)}
+                          onClick={() => void makePlayer(spectator)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[10px] font-black text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-wait disabled:opacity-50"
+                          aria-label={`Make ${spectator.nickname} a contestant`}
+                        >
+                          {promotingUid === spectator.uid ? (
+                            <LoaderCircle size={11} className="animate-spin" />
+                          ) : (
+                            <UserRoundPlus size={11} />
+                          )}
+                          Compete
+                        </button>
+                      ) : (
+                        <Eye size={13} className="shrink-0 text-violet-300/70" />
+                      )}
                     </div>
                   ))}
                 </div>
+                {promotionError && (
+                  <p
+                    className="border-t border-rose-400/20 bg-rose-400/10 px-4 py-2 text-xs text-rose-200"
+                    role="alert"
+                  >
+                    {promotionError}
+                  </p>
+                )}
               </section>
             )}
 

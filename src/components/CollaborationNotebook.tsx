@@ -32,6 +32,7 @@ import {
   truncateExecutionOutput,
 } from "../lib/collaborationNotebook";
 import { CollaborativeCodeCell } from "./CollaborativeCodeCell";
+import { collaborationCursorStyles } from "./collaborationCursorStyles";
 import "./collaboration.css";
 
 export interface CollaborationNotebookProps {
@@ -186,23 +187,13 @@ function CollaborationNotebookRoom({
             ? "Syncing notebook…"
             : "Connecting…";
 
-  const localCursorStyle = relay.awareness
-    ? `.yRemoteSelection-${relay.awareness.clientID}{background:transparent!important}` +
-      `.yRemoteSelectionHead-${relay.awareness.clientID}{border-left-color:transparent!important}`
-    : "";
-  const cursorStyles = [
-    localCursorStyle,
-    ...relay.participants
-      .filter((participant) => !participant.local)
-      .map(
-        (participant) =>
-          `.yRemoteSelection-${participant.clientId}{background:${participant.color}55}` +
-          `.yRemoteSelectionHead-${participant.clientId}{border-left-color:${participant.color}}`,
-      ),
-  ].join("");
+  const cursorStyles = collaborationCursorStyles(
+    relay.awareness?.clientID ?? null,
+    relay.cursorParticipants,
+  );
 
   return (
-    <main className="grid-glow min-h-screen bg-[#070b16] px-3 py-4 text-slate-100 sm:px-5">
+    <main className="collaboration-notebook grid-glow min-h-screen bg-[#070b16] px-3 py-4 text-slate-100 sm:px-5">
       <style>{cursorStyles}</style>
       <div className="mx-auto w-full max-w-6xl">
         <header className="panel mb-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3">

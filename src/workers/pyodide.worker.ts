@@ -1,4 +1,4 @@
-import { formatPythonError } from "../lib/pythonError";
+import { formatPythonError, PYTHON_RUNNER_SOURCE } from "../lib/pythonError";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/";
 const PYODIDE_MODULE = `${PYODIDE_BASE}pyodide.mjs`;
@@ -7,7 +7,10 @@ interface PyodideRuntime {
   setStdin(options: { stdin: () => string | undefined; isatty: boolean }): void;
   setStdout(options: { raw: (value: number) => void }): void;
   setStderr(options: { raw: (value: number) => void }): void;
-  runPythonAsync(code: string, options?: { globals?: unknown }): Promise<unknown>;
+  runPythonAsync(
+    code: string,
+    options?: { globals?: unknown; filename?: string },
+  ): Promise<unknown>;
   toPy(value: unknown): { destroy?: () => void };
 }
 
@@ -44,9 +47,20 @@ async function runCode(code: string, input: string) {
   runtime.setStdout({ raw: (value) => (stdout += String.fromCharCode(value)) });
   runtime.setStderr({ raw: (value) => (stderr += String.fromCharCode(value)) });
 
-  const globals = runtime.toPy({ __name__: "__main__" });
+  const globals = runtime.toPy({ __name__: "__main__", __col_user_code__: code });
   try {
-    await runtime.runPythonAsync(code, { globals });
+    const pythonError = await runtime.runPythonAsync(PYTHON_RUNNER_SOURCE, {
+      globals,
+      filename: "<col-runner>",
+    });
+    if (typeof pythonError === "string" && pythonError) {
+      const formattedError = formatPythonError(pythonError);
+      return {
+        stdout,
+        stderr: [stderr.trimEnd(), formattedError].filter(Boolean).join("\n"),
+        error: formattedError,
+      };
+    }
     return { stdout, stderr };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
